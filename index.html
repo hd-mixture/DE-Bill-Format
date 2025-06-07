@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Web-Based Bill Generator</title>
+  <link rel="icon" type="image/png" href="assets/favicon.jpg">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: 'Calibri', sans-serif;
+      background: #f9fafb;
+      padding: 1rem;
+    }
+    /* Hide the checkbox and its label when printing/PDFing */
+    @media print {
+      #hideHeader, label[for="hideHeader"] {
+        display: none !important;
+      }
+    }
+    #bill {
+      /* width: 210mm;
+      min-height: 297mm; */
+      background: white;
+      margin: auto;
+      padding: 10mm 15mm 15mm 15mm;
+      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+      font-size: 13px;
+      color: black;
+      user-select: text;
+    }
+    /* Add top space when header is hidden */
+    #bill.header-hidden {
+      padding-top: 25mm; /* Adjust this value as needed */
+    }
+    #bill *[contenteditable] {
+      user-select: text;
+      outline: none;
+      cursor: text;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    table, th, td {
+      border: 1px solid black;
+    }
+    th, td {
+      padding: 3px 5px;
+      vertical-align: top;
+    }
+    th {
+      font-weight: 700;
+      text-align: center;
+    }
+    .bold {
+      font-weight: 700;
+    }
+    .font-extrabold {
+      font-weight: 800;
+    }
+    .no-outline:focus {
+      outline: none;
+      box-shadow: none;
+    }
+    /* Prevent page break inside the bill */
+    @media print {
+      body, #bill {
+        margin: 0;
+        box-shadow: none;
+        width: 210mm;
+        height: 297mm;
+        page-break-after: avoid;
+      }
+    }
+    /* Responsive for smaller screens */
+    @media (max-width: 768px) {
+      #bill {
+        width: 100%;
+        min-height: auto;
+        padding: 1rem;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="flex justify-center mb-4">
+    <button id="downloadBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Download PDF</button>
+  </div>
+
+  <div id="bill" contenteditable="false" spellcheck="false" aria-label="Bill Generator">
+    <!-- Header Image -->
+    <div class="mb-2" id="header-container">
+      <img src="assets/header.png" alt="Company Header Image" class="w-full object-contain" id="company-header-image" />
+    </div>
+
+    <table>
+      <thead>
+        <br/><br/>
+        <tr>
+          <th colspan="7" class="bold text-center py-1" contenteditable="true" spellcheck="false">Tax <span class="font-extrabold">INVOICE</span></th>
+        </tr>
+      </thead>
+      <tbody id="invoiceItems">
+        <tr>
+          <td colspan="2" style="width: 80%; text-align: left;" class="align-top p-1" contenteditable="true" spellcheck="false">
+            Detail of Consignee : <span class="font-extrabold">DARSHAN ENTERPRISES</span><br />
+            A-29, Radhekrishna Residency Kapodara Patia, Valia Road<br />
+            GIDC, Ankleshwar 393002, Dist- Bharuch (Gujarat)<br />
+            <span class="font-extrabold">GST TIN  24BCVPP7836H1ZW</span>
+          </td>
+          <td colspan="6" style="text-align: left;" class="align-top p-1" contenteditable="true" spellcheck="false">
+            Bill No : DE-<br />
+            Date :<br />
+            P.O.No :<br />
+            P.O.Date :
+          </td>
+        </tr>
+        <tr>
+          <td colspan="7" style="height: 80px;" class="align-top p-1" contenteditable="true" spellcheck="false">
+            BILLED TO,<br /><br /><br /><br />
+            <span class="font-extrabold">GST TIN</span>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="7" class="bold p-1" contenteditable="true" spellcheck="false">Job :-</td>
+        </tr>
+        <tr class="text-center font-bold" style="font-size: 12px;">
+          <td colspan="1" style="width: 5%;">Sr. No</td>
+          <th style="width: 55%;">Description</th>
+          <th style="width: 12%;">HSN/SAC</th>
+          <th style="width: 7%;">Qty</th>
+          <th style="width: 7%;">Unit</th>
+          <th style="width: 7%;">Rate</th>
+          <th style="width: 15%;">Amount</th>
+        </tr>
+        <tr class="text-center item-row">
+          <td>1</td>
+          <td class="text-left" contenteditable="true" spellcheck="false"></td>
+          <td contenteditable="true" spellcheck="false"></td>
+          <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="6" class="text-right pr-1 font-bold">Total =</td>
+          <td class="text-right pr-1 total-amount" contenteditable="false">0.00</td>
+        </tr>
+        <tr>
+          <td colspan="2" class="p-1" contenteditable="true" spellcheck="false">
+            BANK Name : State Bank of India<br />
+            Account No : 42085596249<br />
+            IFSC Code : SBIN0017314
+          </td>
+          <td colspan="4" style="padding: 0 5px;" contenteditable="false" spellcheck="false">
+            <div style="display: flex; justify-content: space-between; font-size: 13px;">
+              <div>Add:- GST CGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
+              <div style="text-align: right; width: 50px;" class="cgst">0.00</div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px;">
+              <div>SGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
+              <div style="text-align: right; width: 50px;" class="sgst">0.00</div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: bold;">
+              <div>GST TOTAL =</div>
+              <div style="text-align: right; width: 50px;" class="gst-total">0.00</div>
+            </div>
+          </td>
+          <td class="text-right pr-1 font-bold" contenteditable="false" style="width: 15%;" id="gst-total-amount">0.00</td>
+        </tr>
+        <tr>
+          <td colspan="6" class="bold p-1" contenteditable="true" spellcheck="false">RUPEES :- <span class="amount-in-words" style="font-weight: normal;"></span></td>
+          <td class="text-right pr-1 total-in-words" contenteditable="false">0.00</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <div class="mt-2 font-bold text-[13px]" contenteditable="true" spellcheck="false">Term's &amp; Condition :-</div>
+    <ol class="list-decimal list-inside text-[13px] font-normal ml-4" contenteditable="true" spellcheck="false" style="margin-top: 0.25rem;">
+      <li>Subject to be Ankleshwar Juridiction.</li>
+      <li>Payment Work Complete</li>
+      <li>PAN NO: BCVPP7836H</li>
+      <li>GST 18% Extra</li>
+    </ol>
+
+    <div class="mt-4 text-[14px] font-normal" contenteditable="true" spellcheck="false">
+      For, <span class="font-extrabold">DARSHAN ENTERPRISES,</span>
+    </div><br/><br/>
+    <div class="mt-2 text-[13px] font-normal" contenteditable="true" spellcheck="false">(Authorised Signatory)</div>
+
+    <div class="flex justify-end mt-4 gap-2">
+      <div class="flex items-center">
+        <input type="checkbox" id="hideHeader" class="mr-1"/>
+        <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
+      </div>
+      <button id="removeItem" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">Remove Fields</button>
+      <button id="addItem" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Add Item</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script>
+    // Verify html2pdf is loaded
+    function checkHtml2Pdf() {
+      if (typeof html2pdf === 'undefined') {
+        console.error('html2pdf.js is not loaded!');
+        setTimeout(checkHtml2Pdf, 100);
+      } else {
+        console.log('html2pdf.js is loaded successfully!');
+        initializeApp();
+      }
+    }
+
+    function initializeApp() {
+      const downloadBtn = document.getElementById('downloadBtn');
+      const bill = document.getElementById('bill');
+      const invoiceItems = document.getElementById('invoiceItems');
+      const addItemBtn = document.getElementById('addItem');
+      const removeItemBtn = document.getElementById('removeItem');
+      const hideHeaderCheckbox = document.getElementById('hideHeader');
+      const headerContainer = document.getElementById('header-container');
+
+      // Initialize all event listeners
+      addInputListeners();
+      initializeAllRows();
+
+      // Add event listener for hide header checkbox
+      if (hideHeaderCheckbox && headerContainer) {
+        hideHeaderCheckbox.addEventListener('change', () => {
+          if (hideHeaderCheckbox.checked) {
+            headerContainer.style.display = 'none';
+            bill.classList.add('header-hidden'); // Add class to bill
+          } else {
+            headerContainer.style.display = 'block'; // Or 'flex' depending on original display
+            bill.classList.remove('header-hidden'); // Remove class from bill
+          }
+        });
+      }
+
+      // Add download button event listener
+      if (downloadBtn) {
+        downloadBtn.addEventListener('click', () => {
+          const editableElements = bill.querySelectorAll('[contenteditable]');
+          let isValid = true;
+
+          editableElements.forEach(el => {
+            if (el.innerText.trim() === '') {
+              isValid = false;
+              el.classList.add('border-red-500');
+            } else {
+              el.classList.remove('border-red-500');
+            }
+          });
+
+          if (!isValid) {
+            alert('Please fill out all required fields before downloading the PDF.');
+            return;
+          }
+
+          // Temporarily disable contenteditable
+          editableElements.forEach(el => el.setAttribute('contenteditable', 'false'));
+
+          // Temporarily hide the "Hide Header" checkbox and its label for PDF export
+          const hideHeaderCheckbox = document.getElementById('hideHeader');
+          const hideHeaderLabel = document.querySelector('label[for="hideHeader"]');
+          
+          let checkboxDisplayState = '';
+          let labelDisplayState = '';
+
+          if (hideHeaderCheckbox) {
+              checkboxDisplayState = hideHeaderCheckbox.style.display; // Store current display
+              hideHeaderCheckbox.style.display = 'none';
+          }
+          if (hideHeaderLabel) {
+              labelDisplayState = hideHeaderLabel.style.display; // Store current display
+              hideHeaderLabel.style.display = 'none';
+          }
+
+          // Clone without buttons for clean export
+          const clone = bill.cloneNode(true);
+          clone.querySelectorAll('button').forEach(btn => btn.remove());
+          // Ensure the hideHeader checkbox and label are also removed from the clone
+          const cloneCheckbox = clone.querySelector('#hideHeader');
+          const cloneLabel = clone.querySelector('label[for="hideHeader"]');
+          if (cloneCheckbox) cloneCheckbox.remove();
+          if (cloneLabel) cloneLabel.remove();
+
+
+          const opt = {
+            margin: [10, 15, 20, 15], // Top: 10mm, Right: 15mm, Bottom: 20mm, Left: 15mm
+            filename: 'tax_invoice.pdf',
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+          };
+
+          html2pdf().set(opt).from(clone).save().then(() => {
+            editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
+            // Restore display state of the "Hide Header" checkbox and its label
+            if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
+            if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
+          });
+        });
+      }
+
+      // Add item button event listener
+      addItemBtn.addEventListener('click', () => {
+        const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
+        const newRow = document.createElement('tr');
+        newRow.className = 'text-center item-row';
+        newRow.innerHTML = `
+          <td>${rowCount}</td>
+          <td class="text-left" contenteditable="true" spellcheck="false"></td>
+          <td contenteditable="true" spellcheck="false"></td>
+          <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
+        `;
+        invoiceItems.appendChild(newRow);
+        addInputListeners();
+      });
+
+      // Remove item button event listener
+      removeItemBtn.addEventListener('click', () => {
+        const rows = invoiceItems.querySelectorAll('.item-row');
+        if (rows.length > 1) {
+          rows[rows.length - 1].remove();
+          updateRowNumbers();
+          calculateTotal();
+        } else {
+          alert('Cannot remove the last row. At least one item row must remain.');
+        }
+      });
+    }
+
+    // Valid unit codes
+    const validUnits = [
+      'NOS', 'PCS', 'MTR', 'MTRS', 'KGS', 'GMS', 'LTR', 'MLT', 'BOX', 'BAG',
+      'BTL', 'CAN', 'CTN', 'DOZ', 'TUB', 'SET', 'ROL', 'SQFT', 'HRS', 'DAY',
+      'MIN', 'KWH', 'MTRC', 'TON', 'PRS', 'PAC', 'QUINTAL', 'PAIR'
+    ];
+
+    // Function to allow only numbers and one decimal point
+    function allowNumbersAndDecimal(event) {
+      const input = event.target.textContent;
+      // Allow only numbers and one decimal point
+      const cleanInput = input.replace(/[^0-9.]/g, '');
+      // Ensure only one decimal point
+      const parts = cleanInput.split('.');
+      if (parts.length > 2) {
+        event.target.textContent = parts[0] + '.' + parts.slice(1).join('');
+      } else if (input !== cleanInput) {
+        event.target.textContent = cleanInput;
+      }
+    }
+
+    // Function to prevent number input in unit field
+    function preventNumberInput(event) {
+      const input = event.target.textContent;
+      if (/[0-9]/.test(input)) {
+        event.target.textContent = input.replace(/[0-9]/g, '');
+      }
+    }
+
+    // Function to handle unit input
+    function handleUnitInput(event) {
+      preventNumberInput(event);
+      const input = event.target.textContent.trim().toUpperCase();
+      const suggestions = validUnits.filter(unit => unit.startsWith(input));
+      
+      if (input && suggestions.length > 0) {
+        // Create or update tooltip
+        let tooltip = event.target.querySelector('.unit-tooltip');
+        if (!tooltip) {
+          tooltip = document.createElement('div');
+          tooltip.className = 'unit-tooltip';
+          tooltip.style.cssText = `
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            padding: 5px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-height: 150px;
+            overflow-y: auto;
+            font-size: 12px;
+          `;
+          event.target.style.position = 'relative';
+          event.target.appendChild(tooltip);
+        }
+        
+        tooltip.innerHTML = suggestions.map(unit => 
+          `<div class="suggestion" style="cursor: pointer; padding: 2px 5px;" 
+                onclick="this.parentElement.parentElement.textContent = '${unit}'">${unit}</div>`
+        ).join('');
+      } else {
+        // Remove tooltip if no suggestions
+        const tooltip = event.target.querySelector('.unit-tooltip');
+        if (tooltip) tooltip.remove();
+      }
+    }
+
+    // Function to validate unit
+    function validateUnit(event) {
+      const unit = event.target.textContent.trim().toUpperCase();
+      const tooltip = event.target.querySelector('.unit-tooltip');
+      if (tooltip) tooltip.remove();
+
+      if (unit && !validUnits.includes(unit)) {
+        alert('Invalid unit code. Please use one of the following:\n' + validUnits.join(', '));
+        event.target.textContent = '';
+      } else {
+        event.target.textContent = unit;
+      }
+    }
+
+    // Add event listeners to all editable cells
+    function addInputListeners() {
+      // Add calculation listeners
+      const editableCells = document.querySelectorAll('[contenteditable="true"]');
+      editableCells.forEach(cell => {
+        cell.addEventListener('input', calculateTotal);
+      });
+
+      // Add unit validation to unit cells
+      const unitCells = document.querySelectorAll('.unit-cell');
+      unitCells.forEach(cell => {
+        // Remove existing listeners to prevent duplicates
+        cell.removeEventListener('input', handleUnitInput);
+        cell.removeEventListener('blur', validateUnit);
+        cell.removeEventListener('input', preventNumberInput);
+        
+        // Add new listeners
+        cell.addEventListener('input', handleUnitInput);
+        cell.addEventListener('blur', validateUnit);
+        cell.addEventListener('input', preventNumberInput);
+      });
+
+      // Add number validation to quantity and rate cells
+      const quantityCells = document.querySelectorAll('.quantity-cell');
+      const rateCells = document.querySelectorAll('.rate-cell');
+      
+      quantityCells.forEach(cell => {
+        cell.removeEventListener('input', allowNumbersAndDecimal);
+        cell.addEventListener('input', allowNumbersAndDecimal);
+      });
+      
+      rateCells.forEach(cell => {
+        cell.removeEventListener('input', allowNumbersAndDecimal);
+        cell.addEventListener('input', allowNumbersAndDecimal);
+      });
+    }
+
+    // Initialize listeners for all existing rows
+    function initializeAllRows() {
+      const unitCells = document.querySelectorAll('.unit-cell');
+      unitCells.forEach(cell => {
+        cell.removeEventListener('input', handleUnitInput);
+        cell.removeEventListener('blur', validateUnit);
+        cell.removeEventListener('input', preventNumberInput);
+        
+        cell.addEventListener('input', handleUnitInput);
+        cell.addEventListener('blur', validateUnit);
+        cell.addEventListener('input', preventNumberInput);
+      });
+
+      // Initialize quantity and rate cells
+      const quantityCells = document.querySelectorAll('.quantity-cell');
+      const rateCells = document.querySelectorAll('.rate-cell');
+      
+      quantityCells.forEach(cell => {
+        cell.removeEventListener('input', allowNumbersAndDecimal);
+        cell.addEventListener('input', allowNumbersAndDecimal);
+      });
+      
+      rateCells.forEach(cell => {
+        cell.removeEventListener('input', allowNumbersAndDecimal);
+        cell.addEventListener('input', allowNumbersAndDecimal);
+      });
+    }
+
+    function convertNumberToWords(amount) {
+      const a = [
+        '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+        'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+        'Seventeen', 'Eighteen', 'Nineteen'
+      ];
+      const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+      function inWords(num) {
+        if (num === 0) return 'Zero';
+        if (num < 20) return a[num];
+        if (num < 100) return b[Math.floor(num / 10)] + (num % 10 ? ' ' + a[num % 10] : '');
+        if (num < 1000) return a[Math.floor(num / 100)] + ' Hundred' + (num % 100 ? ' ' + inWords(num % 100) : '');
+        if (num < 100000) return inWords(Math.floor(num / 1000)) + ' Thousand' + (num % 1000 ? ' ' + inWords(num % 1000) : '');
+        if (num < 10000000) return inWords(Math.floor(num / 100000)) + ' Lakh' + (num % 100000 ? ' ' + inWords(num % 100000) : '');
+        return inWords(Math.floor(num / 10000000)) + ' Crore' + (num % 10000000 ? ' ' + inWords(num % 10000000) : '');
+        }
+
+      let [rupees, paisa] = amount.toFixed(2).split('.');
+      rupees = parseInt(rupees, 10);
+      paisa = parseInt(paisa, 10);
+
+      const rupeeWords = inWords(rupees);
+      const paisaWords = inWords(paisa);
+
+      return `${rupeeWords} Rupees and ${paisaWords} Paisa Only.`;
+    }
+
+    function calculateTotal() {
+      const rows = invoiceItems.querySelectorAll('.item-row');
+      let total = 0;
+
+      rows.forEach(row => {
+        const qty = parseFloat(row.children[3].textContent) || 0;
+        const rate = parseFloat(row.children[5].textContent) || 0;
+        const amount = qty * rate;
+        row.querySelector('.amount').textContent = amount.toFixed(2);
+        total += amount;
+      });
+
+      const cgst = total * 0.09; // 9%
+      const sgst = total * 0.09; // 9%
+      const gstTotal = cgst + sgst;
+
+      document.querySelector('.total-amount').textContent = total.toFixed(2);
+      document.querySelector('.cgst').textContent = cgst.toFixed(2);
+      document.querySelector('.sgst').textContent = sgst.toFixed(2);
+      document.querySelector('.gst-total').textContent = gstTotal.toFixed(2);
+      document.getElementById('gst-total-amount').textContent = gstTotal.toFixed(2);
+
+      const totalIncludingGST = total + gstTotal;
+      document.querySelector('.total-in-words').textContent = totalIncludingGST.toFixed(2);
+      document.querySelector('.amount-in-words').textContent = convertNumberToWords(totalIncludingGST);
+    }
+
+    // Function to update row numbers after removal
+    function updateRowNumbers() {
+      const rows = invoiceItems.querySelectorAll('.item-row');
+      rows.forEach((row, index) => {
+        row.children[0].textContent = index + 1;
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      checkHtml2Pdf();
+    });
+  </script>
+</body>
+</html>
