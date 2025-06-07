@@ -1,5 +1,5 @@
 # DE Bill Format - Tax Invoice Generator
-
+[Generate Bill](https://hd-mixture.github.io/DE-Bill-Format/)
 A professional tax invoice generator with GST calculation, amount in words, and PDF export functionality.
 
 ## Features
