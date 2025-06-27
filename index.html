@@ -1,71 +1,300 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Web-Based Bill Generator</title>
   <link rel="icon" type="image/png" href="assets/favicon.jpg">
+  <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase SDK -->
+  <script type="module">
+    let defaultBillHTML = '';
+    let isBillSaved = true;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const billEl = document.getElementById('bill');
+      defaultBillHTML = billEl.innerHTML; // store initial layout
+      loadSavedBills();                   // load only once
+      checkHtml2Pdf();                    // check for html2pdf.js
+    });
+
+
+    document.addEventListener('input', () => {
+      isBillSaved = false;
+    });
+
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-analytics.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDauJyX47Cc1SJm9Ou2dA79nAXpJcSVrWE",
+      authDomain: "de-bill-format.firebaseapp.com",
+      projectId: "de-bill-format",
+      storageBucket: "de-bill-format.firebasestorage.app",
+      messagingSenderId: "857188103729",
+      appId: "1:857188103729:web:c0f7bacaf02e05c1f1c710",
+      measurementId: "G-1QTZ633RYJ"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const db = getFirestore(app);
+
+    window.saveBill = async function () {
+      const customName = prompt("Enter a name for this bill:");
+      if (!customName) {
+        showToast('Save cancelled: No name provided.');
+        return;
+      }
+
+      const billData = {
+        content: document.getElementById('bill').innerHTML,
+        timestamp: serverTimestamp(),
+        customName: customName.trim()
+      };
+
+      try {
+        await addDoc(collection(db, 'bills'), billData);
+        isBillSaved = true; // ✅ Mark as saved
+        showToast('✅ Bill saved successfully!');
+        loadSavedBills();
+      } catch (error) {
+        console.error('Error saving bill:', error);
+        showToast('❌ Error saving bill. Please try again.');
+      }
+    };
+
+
+    window.deleteBill = async function (docId, event) {
+      event.stopPropagation();
+
+      // Debug log to confirm it's triggered
+      console.log("🧪 deleteBill() triggered with ID:", docId);
+
+      if (!docId || typeof docId !== 'string') {
+        console.error("❌ Invalid document ID passed to deleteBill");
+        showToast("❌ Could not delete: Invalid document ID.");
+        return;
+      }
+
+      const confirmDelete = confirm("Are you sure you want to delete this bill?");
+      if (!confirmDelete) return;
+
+      try {
+        await deleteDoc(doc(db, 'bills', docId));
+        console.log("✅ Deleted bill:", docId);
+        showToast('🗑️ Bill deleted successfully!');
+        loadSavedBills();
+      } catch (error) {
+        console.error('❌ Error deleting bill:', error.message, error);
+        showToast('❌ Error deleting bill: ' + error.message);
+      }
+    };
+
+
+    window.renameBill = async function (docId, currentName, event) {
+      event.stopPropagation();
+      const newName = prompt("Enter new name for this bill:", currentName);
+      if (!newName || newName === currentName) return;
+      try {
+        await updateDoc(doc(db, 'bills', docId), { customName: newName.trim() });
+        showToast('✏️ Bill name updated!');
+        loadSavedBills();
+      } catch (error) {
+        console.error('Rename error:', error);
+        showToast('❌ Could not rename.');
+      }
+    };
+
+    window.loadSavedBills = async function () {
+      const savedBillsList = document.getElementById('savedBillsList');
+      savedBillsList.innerHTML = '';
+
+      // ✅ Check if "+ New Bill" button already exists
+      if (!document.getElementById('newBillButton')) {
+        const newBillBtn = document.createElement('div');
+        newBillBtn.id = 'newBillButton'; // Unique ID to prevent duplication
+        newBillBtn.className = 'saved-bill-item font-semibold text-blue-600 cursor-pointer hover:underline';
+        newBillBtn.textContent = '+ New Bill';
+        newBillBtn.onclick = async () => {
+          if (!isBillSaved) {
+            const confirmSave = confirm("You have unsaved changes.\nDo you want to save the current bill before creating a new one?");
+            if (confirmSave) {
+              await window.saveBill();
+            } else {
+              return;
+            }
+          }
+
+          const billEl = document.getElementById('bill');
+          billEl.innerHTML = defaultBillHTML; // ✅ Restore full layout
+          addInputListeners();                // Re-activate all input logic
+          initializeAllRows?.();             // Optional: re-initialize unit listeners
+          calculateTotal();                  // Recalculate totals
+          toggleSideNav();                   // Close side nav
+          showToast("🆕 New bill started");
+          isBillSaved = false;
+        };
+
+
+
+        savedBillsList.appendChild(newBillBtn);
+      }
+
+      try {
+        const q = query(collection(db, 'bills'), orderBy('timestamp', 'desc'));
+        const snapshot = await getDocs(q);
+
+        const seenIds = new Set();
+
+        snapshot.forEach(docSnap => {
+          const bill = docSnap.data();
+          const docId = docSnap.id;
+          if (seenIds.has(docId)) return; // prevent duplication
+          seenIds.add(docId);
+
+          const billItem = document.createElement('div');
+          billItem.className = 'saved-bill-item group';
+          billItem.innerHTML = `
+  <div class="flex justify-between items-center">
+    <div>
+      <div class="font-bold">Name: ${bill.customName || 'Unnamed Bill'}</div>
+      <div class="text-xs text-gray-500">
+        ${bill.timestamp ? new Date(bill.timestamp.toDate()).toLocaleString() : ''}
+      </div>
+    </div>
+    <button title="Delete" onclick="deleteBill('${docId}', event)" class="text-red-600 hover:text-red-800 ml-2">
+      <i data-lucide="trash-2" class="w-5 h-5"></i>
+    </button>
+  </div>
+`;
+
+
+          billItem.onclick = () => loadBill(docId, bill);
+          savedBillsList.appendChild(billItem);
+        });
+      } catch (error) {
+        console.error('Error loading bills:', error);
+        showToast('❌ Error loading saved bills.');
+      }
+      lucide.createIcons(); // ⬅️ This renders all <i data-lucide="..."> icons
+
+    };
+
+    window.loadBill = function (docId, billData) {
+      if (confirm('Load this bill? Current changes will be lost.')) {
+        document.getElementById('bill').innerHTML = billData.content;
+        calculateTotal?.();
+        toggleSideNav?.();
+      }
+    };
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.remove('hidden');
+      toast.classList.add('opacity-100');
+      setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 3000);
+    }
+
+    // document.addEventListener('DOMContentLoaded', () => {
+    //   loadSavedBills();
+    // });
+  </script>
+  <!-- Toast Message -->
+  <div id="toast"
+    class="fixed bottom-5 right-5 bg-green-600 text-white px-4 py-2 rounded shadow-lg hidden z-50 transition duration-300 ease-in-out">
+  </div>
+
+  <!-- Saved Bills Container Placeholder -->
   <style>
     body {
       font-family: 'Calibri', sans-serif;
       background: #f9fafb;
       padding: 1rem;
     }
+
     /* Hide the checkbox and its label when printing/PDFing */
     @media print {
-      #hideHeader, label[for="hideHeader"] {
+
+      #hideHeader,
+      label[for="hideHeader"] {
         display: none !important;
       }
     }
+
     #bill {
       /* width: 210mm;
       min-height: 297mm; */
       background: white;
       margin: auto;
       padding: 10mm 15mm 15mm 15mm;
-      box-shadow: 0 0 5px rgba(0,0,0,0.1);
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
       font-size: 13px;
       color: black;
+      -webkit-user-select: text;
       user-select: text;
     }
+
     /* Add top space when header is hidden */
     #bill.header-hidden {
-      padding-top: 25mm; /* Adjust this value as needed */
+      padding-top: 25mm;
+      /* Adjust this value as needed */
     }
+
     #bill *[contenteditable] {
+      -webkit-user-select: text;
       user-select: text;
       outline: none;
       cursor: text;
     }
+
     table {
       border-collapse: collapse;
       width: 100%;
     }
-    table, th, td {
+
+    table,
+    th,
+    td {
       border: 1px solid black;
     }
-    th, td {
+
+    th,
+    td {
       padding: 3px 5px;
       vertical-align: top;
     }
+
     th {
       font-weight: 700;
       text-align: center;
     }
+
     .bold {
       font-weight: 700;
     }
+
     .font-extrabold {
       font-weight: 800;
     }
+
     .no-outline:focus {
       outline: none;
       box-shadow: none;
     }
+
     /* Prevent page break inside the bill */
     @media print {
-      body, #bill {
+
+      body,
+      #bill {
         margin: 0;
         box-shadow: none;
         width: 210mm;
@@ -73,6 +302,7 @@
         page-break-after: avoid;
       }
     }
+
     /* Responsive for smaller screens */
     @media (max-width: 768px) {
       #bill {
@@ -82,129 +312,234 @@
         font-size: 12px;
       }
     }
+
+    /* Side Navigation Styles */
+    .side-nav {
+      position: fixed;
+      left: -300px;
+      top: 0;
+      width: 300px;
+      height: 100vh;
+      background: white;
+      box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+      transition: left 0.3s ease;
+      z-index: 1000;
+      padding: 1rem;
+    }
+
+    .side-nav.open {
+      left: 0;
+    }
+
+    .saved-bills-list {
+      margin-top: 1rem;
+      max-height: calc(100vh - 150px);
+      overflow-y: auto;
+    }
+
+    .saved-bill-item {
+      padding: 0.5rem;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+    }
+
+    .saved-bill-item:hover {
+      background: #f5f5f5;
+    }
+
+    .main-content {
+      transition: margin-left 0.3s ease;
+    }
+
+    .main-content.shifted {
+      margin-left: 300px;
+    }
   </style>
 </head>
+
 <body>
-  <div class="flex justify-center mb-4">
-    <button id="downloadBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Download PDF</button>
+  <!-- Side Navigation -->
+  <div class="side-nav" id="sideNav">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-xl font-bold">Saved Bills</h2>
+      <button id="closeNav" class="text-gray-500 hover:text-gray-700" title="Close navigation">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="saved-bills-list" id="savedBillsList">
+      <!-- Saved bills will be listed here -->
+    </div>
   </div>
 
-  <div id="bill" contenteditable="false" spellcheck="false" aria-label="Bill Generator">
-    <!-- Header Image -->
-    <div class="mb-2" id="header-container">
-      <img src="assets/header.png" alt="Company Header Image" class="w-full object-contain" id="company-header-image" />
+
+
+
+  <div class="main-content" id="mainContent">
+    <div class="flex justify-between items-center mb-4">
+      <button id="toggleNav" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition"
+        title="Toggle navigation">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+      <div class="flex gap-2">
+        <button id="saveBtn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Save
+          Bill</button>
+        <button id="downloadBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Download
+          PDF</button>
+      </div>
     </div>
 
-    <table>
-      <thead>
-        <br/><br/>
-        <tr>
-          <th colspan="7" class="bold text-center py-1" contenteditable="true" spellcheck="false">Tax <span class="font-extrabold">INVOICE</span></th>
-        </tr>
-      </thead>
-      <tbody id="invoiceItems">
-        <tr>
-          <td colspan="2" style="width: 80%; text-align: left;" class="align-top p-1" contenteditable="true" spellcheck="false">
-            Detail of Consignee : <span class="font-extrabold">DARSHAN ENTERPRISES</span><br />
-            A-29, Radhekrishna Residency Kapodara Patia, Valia Road<br />
-            GIDC, Ankleshwar 393002, Dist- Bharuch (Gujarat)<br />
-            <span class="font-extrabold">GST TIN  24BCVPP7836H1ZW</span>
-          </td>
-          <td colspan="6" style="text-align: left;" class="align-top p-1" contenteditable="true" spellcheck="false">
-            Bill No : DE-<br />
-            Date :<br />
-            P.O.No :<br />
-            P.O.Date :
-          </td>
-        </tr>
-        <tr>
-          <td colspan="7" style="height: 80px;" class="align-top p-1" contenteditable="true" spellcheck="false">
-            BILLED TO,<br /><br /><br /><br />
-            <span class="font-extrabold">GST TIN</span>
-          </td>
-        </tr>
-        <tr>
-          <td colspan="7" class="bold p-1" contenteditable="true" spellcheck="false">Job :-</td>
-        </tr>
-        <tr class="text-center font-bold" style="font-size: 12px;">
-          <td colspan="1" style="width: 5%;">Sr. No</td>
-          <th style="width: 55%;">Description</th>
-          <th style="width: 12%;">HSN/SAC</th>
-          <th style="width: 7%;">Qty</th>
-          <th style="width: 7%;">Unit</th>
-          <th style="width: 7%;">Rate</th>
-          <th style="width: 15%;">Amount</th>
-        </tr>
-        <tr class="text-center item-row">
-          <td>1</td>
-          <td class="text-left" contenteditable="true" spellcheck="false"></td>
-          <td contenteditable="true" spellcheck="false"></td>
-          <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
-        </tr>
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="6" class="text-right pr-1 font-bold">Total =</td>
-          <td class="text-right pr-1 total-amount" contenteditable="false">0.00</td>
-        </tr>
-        <tr>
-          <td colspan="2" class="p-1" contenteditable="true" spellcheck="false">
-            BANK Name : State Bank of India<br />
-            Account No : 42085596249<br />
-            IFSC Code : SBIN0017314
-          </td>
-          <td colspan="4" style="padding: 0 5px;" contenteditable="false" spellcheck="false">
-            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-              <div>Add:- GST CGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
-              <div style="text-align: right; width: 50px;" class="cgst">0.00</div>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-size: 13px;">
-              <div>SGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
-              <div style="text-align: right; width: 50px;" class="sgst">0.00</div>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: bold;">
-              <div>GST TOTAL =</div>
-              <div style="text-align: right; width: 50px;" class="gst-total">0.00</div>
-            </div>
-          </td>
-          <td class="text-right pr-1 font-bold" contenteditable="false" style="width: 15%;" id="gst-total-amount">0.00</td>
-        </tr>
-        <tr>
-          <td colspan="6" class="bold p-1" contenteditable="true" spellcheck="false">RUPEES :- <span class="amount-in-words" style="font-weight: normal;"></span></td>
-          <td class="text-right pr-1 total-in-words" contenteditable="false">0.00</td>
-        </tr>
-      </tfoot>
-    </table>
+    <div class="my-2 flex justify-end">
+      <label
+        class="cursor-pointer bg-blue-600 text-white px-3 py-1 rounded shadow hover:bg-blue-700 transition duration-200">
+        Upload Custom Header
+        <input type="file" id="uploadHeader" accept="image/*" hidden />
+      </label>
+    </div>
 
-    <div class="mt-2 font-bold text-[13px]" contenteditable="true" spellcheck="false">Term's &amp; Condition :-</div>
-    <ol class="list-decimal list-inside text-[13px] font-normal ml-4" contenteditable="true" spellcheck="false" style="margin-top: 0.25rem;">
-      <li>Subject to be Ankleshwar Juridiction.</li>
-      <li>Payment Work Complete</li>
-      <li>PAN NO: BCVPP7836H</li>
-      <li>GST 18% Extra</li>
-    </ol>
 
-    <div class="mt-4 text-[14px] font-normal" contenteditable="true" spellcheck="false">
-      For, <span class="font-extrabold">DARSHAN ENTERPRISES,</span>
-    </div><br/><br/>
-    <div class="mt-2 text-[13px] font-normal" contenteditable="true" spellcheck="false">(Authorised Signatory)</div>
-
-    <div class="flex justify-end mt-4 gap-2">
-      <div class="flex items-center">
-        <input type="checkbox" id="hideHeader" class="mr-1"/>
-        <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
+    <div id="bill" contenteditable="false" spellcheck="false" aria-label="Bill Generator">
+      <!-- Header Image -->
+      <div class="mb-2" id="header-container">
+        <img src="assets/header.png" alt="Company Header Image" class="w-full object-contain"
+          id="company-header-image" />
       </div>
-      <button id="removeItem" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">Remove Fields</button>
-      <button id="addItem" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Add Item</button>
+
+      <table>
+        <thead>
+          <br /><br />
+          <tr>
+            <th colspan="7" class="bold text-center py-1" contenteditable="true" spellcheck="false">Tax <span
+                class="font-extrabold">INVOICE</span></th>
+          </tr>
+        </thead>
+        <tbody id="invoiceItems">
+          <tr>
+            <td colspan="2" style="width: 80%; text-align: left;" class="align-top p-1" contenteditable="true"
+              spellcheck="false">
+              Detail of Consignee : <span class="font-extrabold">DARSHAN ENTERPRISES</span><br />
+              A-29, Radhekrishna Residency Kapodara Patia, Valia Road<br />
+              GIDC, Ankleshwar 393002, Dist- Bharuch (Gujarat)<br />
+              <span class="font-extrabold">GST TIN 24BCVPP7836H1ZW</span>
+            </td>
+            <td colspan="6" style="text-align: left;" class="align-top p-1" contenteditable="true" spellcheck="false">
+              Bill No : DE-<br />
+              Date :<br />
+              P.O.No :<br />
+              P.O.Date :
+            </td>
+          </tr>
+          <tr>
+            <td colspan="7" style="height: 80px;" class="align-top p-1" contenteditable="true" spellcheck="false">
+              BILLED TO,<br /><br /><br /><br />
+              <span class="font-extrabold">GST TIN</span>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="7" class="bold p-1" contenteditable="true" spellcheck="false">Job :-</td>
+          </tr>
+          <tr class="text-center font-bold" style="font-size: 12px;">
+            <td colspan="1" style="width: 5%;">Sr. No</td>
+            <th style="width: 55%;">Description</th>
+            <th style="width: 12%;">HSN/SAC</th>
+            <th style="width: 7%;">Qty</th>
+            <th style="width: 7%;">Unit</th>
+            <th style="width: 7%;">Rate</th>
+            <th style="width: 15%;">Amount</th>
+          </tr>
+          <tr class="text-center item-row">
+            <td>1</td>
+            <td class="text-left" contenteditable="true" spellcheck="false"></td>
+            <td contenteditable="true" spellcheck="false"></td>
+            <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
+            <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
+            <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
+            <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="6" class="text-right pr-1 font-bold">Total =</td>
+            <td class="text-right pr-1 total-amount" contenteditable="false">0.00</td>
+          </tr>
+          <tr>
+            <td colspan="2" class="p-1" contenteditable="true" spellcheck="false">
+              BANK Name : State Bank of India<br />
+              Account No : 42085596249<br />
+              IFSC Code : SBIN0017314
+            </td>
+            <td colspan="4" style="padding: 0 5px;" contenteditable="false" spellcheck="false">
+              <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                <div>Add:- GST CGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
+                <div style="text-align: right; width: 50px;" class="cgst">0.00</div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                <div>SGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
+                <div style="text-align: right; width: 50px;" class="sgst">0.00</div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: bold;">
+                <div>GST TOTAL =</div>
+                <div style="text-align: right; width: 50px;" class="gst-total">0.00</div>
+              </div>
+            </td>
+            <td class="text-right pr-1 font-bold" contenteditable="false" style="width: 15%;" id="gst-total-amount">0.00
+            </td>
+          </tr>
+          <tr>
+            <td colspan="6" class="bold p-1" contenteditable="true" spellcheck="false">RUPEES :- <span
+                class="amount-in-words" style="font-weight: normal;"></span></td>
+            <td class="text-right pr-1 total-in-words" contenteditable="false">0.00</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="mt-2 font-bold text-[13px]" contenteditable="true" spellcheck="false">Term's &amp; Condition :-</div>
+      <ol class="list-decimal list-inside text-[13px] font-normal ml-4" contenteditable="true" spellcheck="false"
+        style="margin-top: 0.25rem;">
+        <li>Subject to be Ankleshwar Juridiction.</li>
+        <li>Payment Work Complete</li>
+        <li>PAN NO: BCVPP7836H</li>
+        <li>GST 18% Extra</li>
+      </ol>
+
+      <div class="mt-4 text-[14px] font-normal" contenteditable="true" spellcheck="false">
+        For, <span class="font-extrabold">DARSHAN ENTERPRISES,</span>
+      </div><br /><br />
+      <div class="mt-2 text-[13px] font-normal" contenteditable="true" spellcheck="false">(Authorised Signatory)</div>
+
+      <div class="flex justify-end mt-4 gap-2">
+        <div class="flex items-center">
+          <input type="checkbox" id="hideHeader" class="mr-1" />
+          <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
+        </div>
+        <button id="removeItem" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">Remove
+          Fields</button>
+        <button id="addItem" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Add
+          Item</button>
+      </div>
     </div>
   </div>
 
   <!-- Scripts -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js" integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"
+    integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script>
+    function toggleSideNav() {
+      const sideNav = document.getElementById('sideNav');
+      const mainContent = document.getElementById('mainContent');
+      sideNav.classList.toggle('open');
+      mainContent.classList.toggle('shifted');
+    }
+
+    // Add these event listeners in your initializeApp function
+    document.getElementById('toggleNav').addEventListener('click', toggleSideNav);
+    document.getElementById('closeNav').addEventListener('click', toggleSideNav);
+    document.getElementById('saveBtn').addEventListener('click', () => window.saveBill());
+
     // Verify html2pdf is loaded
     function checkHtml2Pdf() {
       if (typeof html2pdf === 'undefined') {
@@ -268,21 +603,30 @@
           // Temporarily hide the "Hide Header" checkbox and its label for PDF export
           const hideHeaderCheckbox = document.getElementById('hideHeader');
           const hideHeaderLabel = document.querySelector('label[for="hideHeader"]');
-          
+
           let checkboxDisplayState = '';
           let labelDisplayState = '';
 
           if (hideHeaderCheckbox) {
-              checkboxDisplayState = hideHeaderCheckbox.style.display; // Store current display
-              hideHeaderCheckbox.style.display = 'none';
+            checkboxDisplayState = hideHeaderCheckbox.style.display; // Store current display
+            hideHeaderCheckbox.style.display = 'none';
           }
           if (hideHeaderLabel) {
-              labelDisplayState = hideHeaderLabel.style.display; // Store current display
-              hideHeaderLabel.style.display = 'none';
+            labelDisplayState = hideHeaderLabel.style.display; // Store current display
+            hideHeaderLabel.style.display = 'none';
           }
 
           // Clone without buttons for clean export
           const clone = bill.cloneNode(true);
+          clone.querySelectorAll('button').forEach(btn => btn.remove());
+
+          // ✅ Force full-width header image
+          clone.querySelectorAll('img').forEach(img => {
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.objectFit = 'cover';
+          });
+
           clone.querySelectorAll('button').forEach(btn => btn.remove());
           // Ensure the hideHeader checkbox and label are also removed from the clone
           const cloneCheckbox = clone.querySelector('#hideHeader');
@@ -292,7 +636,7 @@
 
 
           const opt = {
-            margin: [10, 15, 20, 15], // Top: 10mm, Right: 15mm, Bottom: 20mm, Left: 15mm
+            margin: [0, 0, 5, 0], // Top: 10mm, Right: 15mm, Bottom: 20mm, Left: 15mm
             filename: 'tax_invoice.pdf',
             image: { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true },
@@ -307,6 +651,28 @@
           });
         });
       }
+
+      //upload own header
+      const uploadInput = document.getElementById('uploadHeader');
+
+      uploadInput.addEventListener('change', function (event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          const customHeaderURL = e.target.result;
+          const headerImg = document.getElementById('company-header-image');
+
+          if (headerImg) {
+            headerImg.src = customHeaderURL;
+            headerImg.setAttribute('data-custom', 'true'); // Optional flag
+            showToast("✅ Custom header applied for this session.");
+          }
+        };
+        reader.readAsDataURL(file);
+      });
+
 
       // Add item button event listener
       addItemBtn.addEventListener('click', () => {
@@ -373,7 +739,7 @@
       preventNumberInput(event);
       const input = event.target.textContent.trim().toUpperCase();
       const suggestions = validUnits.filter(unit => unit.startsWith(input));
-      
+
       if (input && suggestions.length > 0) {
         // Create or update tooltip
         let tooltip = event.target.querySelector('.unit-tooltip');
@@ -395,8 +761,8 @@
           event.target.style.position = 'relative';
           event.target.appendChild(tooltip);
         }
-        
-        tooltip.innerHTML = suggestions.map(unit => 
+
+        tooltip.innerHTML = suggestions.map(unit =>
           `<div class="suggestion" style="cursor: pointer; padding: 2px 5px;" 
                 onclick="this.parentElement.parentElement.textContent = '${unit}'">${unit}</div>`
         ).join('');
@@ -436,7 +802,7 @@
         cell.removeEventListener('input', handleUnitInput);
         cell.removeEventListener('blur', validateUnit);
         cell.removeEventListener('input', preventNumberInput);
-        
+
         // Add new listeners
         cell.addEventListener('input', handleUnitInput);
         cell.addEventListener('blur', validateUnit);
@@ -446,12 +812,12 @@
       // Add number validation to quantity and rate cells
       const quantityCells = document.querySelectorAll('.quantity-cell');
       const rateCells = document.querySelectorAll('.rate-cell');
-      
+
       quantityCells.forEach(cell => {
         cell.removeEventListener('input', allowNumbersAndDecimal);
         cell.addEventListener('input', allowNumbersAndDecimal);
       });
-      
+
       rateCells.forEach(cell => {
         cell.removeEventListener('input', allowNumbersAndDecimal);
         cell.addEventListener('input', allowNumbersAndDecimal);
@@ -465,7 +831,7 @@
         cell.removeEventListener('input', handleUnitInput);
         cell.removeEventListener('blur', validateUnit);
         cell.removeEventListener('input', preventNumberInput);
-        
+
         cell.addEventListener('input', handleUnitInput);
         cell.addEventListener('blur', validateUnit);
         cell.addEventListener('input', preventNumberInput);
@@ -474,12 +840,12 @@
       // Initialize quantity and rate cells
       const quantityCells = document.querySelectorAll('.quantity-cell');
       const rateCells = document.querySelectorAll('.rate-cell');
-      
+
       quantityCells.forEach(cell => {
         cell.removeEventListener('input', allowNumbersAndDecimal);
         cell.addEventListener('input', allowNumbersAndDecimal);
       });
-      
+
       rateCells.forEach(cell => {
         cell.removeEventListener('input', allowNumbersAndDecimal);
         cell.addEventListener('input', allowNumbersAndDecimal);
@@ -502,7 +868,7 @@
         if (num < 100000) return inWords(Math.floor(num / 1000)) + ' Thousand' + (num % 1000 ? ' ' + inWords(num % 1000) : '');
         if (num < 10000000) return inWords(Math.floor(num / 100000)) + ' Lakh' + (num % 100000 ? ' ' + inWords(num % 100000) : '');
         return inWords(Math.floor(num / 10000000)) + ' Crore' + (num % 10000000 ? ' ' + inWords(num % 10000000) : '');
-        }
+      }
 
       let [rupees, paisa] = amount.toFixed(2).split('.');
       rupees = parseInt(rupees, 10);
@@ -549,9 +915,10 @@
       });
     }
 
-    document.addEventListener('DOMContentLoaded', () => {
-      checkHtml2Pdf();
-    });
+    // document.addEventListener('DOMContentLoaded', () => {
+    //   checkHtml2Pdf();
+    // });
   </script>
 </body>
+
 </html>
