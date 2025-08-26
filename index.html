@@ -8,21 +8,28 @@
   <link rel="icon" type="image/png" href="assets/favicon.jpg">
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lottie Web Component for Global Loader -->
+  <script src="https://unpkg.com/@lottiefiles/dotlottie-wc@0.6.2/dist/dotlottie-wc.js" type="module"></script>
   <!-- Firebase SDK -->
   <script type="module">
     let defaultBillHTML = '';
     let isBillSaved = true;
+    let currentDocId = null; // null => new/unsaved bill; string => editing existing bill
+    let hasUserStarted = false; // Tracks if user started editing current bill
 
     document.addEventListener('DOMContentLoaded', () => {
       const billEl = document.getElementById('bill');
       defaultBillHTML = billEl.innerHTML; // store initial layout
       loadSavedBills();                   // load only once
       checkHtml2Pdf();                    // check for html2pdf.js
+      updateActionButtons?.();            // initialize buttons as disabled until started
     });
 
 
     document.addEventListener('input', () => {
       isBillSaved = false;
+      hasUserStarted = true;
+      updateActionButtons?.();
     });
 
 
@@ -44,27 +51,128 @@
     const analytics = getAnalytics(app);
     const db = getFirestore(app);
 
+    function formatFirestoreTimestamp(ts) {
+      try {
+        const date = ts?.toDate ? ts.toDate() : new Date(ts);
+        return date.toLocaleString(undefined, {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: true
+        });
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function toMillis(ts) {
+      try {
+        const d = ts?.toDate ? ts.toDate() : new Date(ts);
+        const ms = d?.getTime?.();
+        return Number.isFinite(ms) ? ms : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function showLoader() {
+      const el = document.getElementById('loaderOverlay');
+      if (!el) return;
+      el.classList.remove('hidden');
+    }
+
+    function hideLoader() {
+      const el = document.getElementById('loaderOverlay');
+      if (!el) return;
+      el.classList.add('hidden');
+    }
+
+    // Expose loader helpers to non-module scripts
+    window.showLoader = showLoader;
+    window.hideLoader = hideLoader;
+
+    function updateSaveButtonLabel() {
+      const saveBtn = document.getElementById('saveBtn');
+      if (!saveBtn) return;
+      saveBtn.textContent = currentDocId ? 'Save Changes' : 'Save Bill';
+    }
+
+    function updateActionButtons() {
+      const saveBtn = document.getElementById('saveBtn');
+      const downloadBtn = document.getElementById('downloadBtn');
+      const saveDisabled = !hasUserStarted; // user must start editing to save
+      const downloadDisabled = !currentDocId; // require saved bill to download
+
+      if (saveBtn) {
+        saveBtn.disabled = saveDisabled;
+        if (saveDisabled) saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        else saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+
+      if (downloadBtn) {
+        downloadBtn.disabled = downloadDisabled;
+        if (downloadDisabled) downloadBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        else downloadBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+    }
+
+    function markActiveBill(docId) {
+      const items = document.querySelectorAll('.saved-bill-item');
+      items.forEach(el => el.classList.remove('active'));
+      if (!docId) return;
+      const el = document.querySelector(`.saved-bill-item[data-doc-id="${docId}"]`);
+      if (el) el.classList.add('active');
+    }
+
     window.saveBill = async function () {
+      const billHTML = document.getElementById('bill').innerHTML;
+      const hideHeaderCheckboxRef = document.getElementById('hideHeader');
+      const hideHeaderState = !!hideHeaderCheckboxRef?.checked;
+
+      try {
+        showLoader();
+        if (currentDocId) {
+          // Editing existing bill: do not prompt for name, only update content/timestamp
+          await updateDoc(doc(db, 'bills', currentDocId), {
+            content: billHTML,
+            hideHeader: hideHeaderState,
+            updatedAt: serverTimestamp(),
+            timestamp: serverTimestamp()
+          });
+          isBillSaved = true;
+          showToast('Changes saved!', 'success');
+        } else {
+          // Creating new bill: prompt for a name
       const customName = prompt("Enter a name for this bill:");
       if (!customName) {
-        showToast('Save cancelled: No name provided.');
+        showToast('Save cancelled: No name provided.', 'warning');
         return;
       }
 
+          const now = serverTimestamp();
       const billData = {
-        content: document.getElementById('bill').innerHTML,
-        timestamp: serverTimestamp(),
+            content: billHTML,
+            hideHeader: hideHeaderState,
+            createdAt: now,
+            updatedAt: now,
+            timestamp: now,
         customName: customName.trim()
       };
 
-      try {
-        await addDoc(collection(db, 'bills'), billData);
-        isBillSaved = true; // ✅ Mark as saved
-        showToast('✅ Bill saved successfully!');
+          const docRef = await addDoc(collection(db, 'bills'), billData);
+          currentDocId = docRef.id;
+          const billElRef = document.getElementById('bill');
+          if (billElRef) billElRef.dataset.customName = customName.trim();
+          isBillSaved = true;
+        showToast('Bill saved successfully!', 'success');
+        }
+        updateSaveButtonLabel();
         loadSavedBills();
+        updateActionButtons?.();
       } catch (error) {
         console.error('Error saving bill:', error);
-        showToast('❌ Error saving bill. Please try again.');
+        showToast('Error saving bill. Please try again.', 'error');
+      } finally {
+        hideLoader();
       }
     };
 
@@ -77,7 +185,7 @@
 
       if (!docId || typeof docId !== 'string') {
         console.error("❌ Invalid document ID passed to deleteBill");
-        showToast("❌ Could not delete: Invalid document ID.");
+        showToast("Could not delete: Invalid document ID.", 'error');
         return;
       }
 
@@ -85,13 +193,16 @@
       if (!confirmDelete) return;
 
       try {
+        showLoader();
         await deleteDoc(doc(db, 'bills', docId));
         console.log("✅ Deleted bill:", docId);
-        showToast('🗑️ Bill deleted successfully!');
+        showToast('Bill deleted successfully!', 'success');
         loadSavedBills();
       } catch (error) {
         console.error('❌ Error deleting bill:', error.message, error);
-        showToast('❌ Error deleting bill: ' + error.message);
+        showToast('Error deleting bill: ' + error.message, 'error');
+      } finally {
+        hideLoader();
       }
     };
 
@@ -101,12 +212,15 @@
       const newName = prompt("Enter new name for this bill:", currentName);
       if (!newName || newName === currentName) return;
       try {
+        showLoader();
         await updateDoc(doc(db, 'bills', docId), { customName: newName.trim() });
-        showToast('✏️ Bill name updated!');
+        showToast('Bill name updated!', 'success');
         loadSavedBills();
       } catch (error) {
         console.error('Rename error:', error);
-        showToast('❌ Could not rename.');
+        showToast('Could not rename.', 'error');
+      } finally {
+        hideLoader();
       }
     };
 
@@ -136,8 +250,20 @@
           initializeAllRows?.();             // Optional: re-initialize unit listeners
           calculateTotal();                  // Recalculate totals
           toggleSideNav();                   // Close side nav
-          showToast("🆕 New bill started");
+          showToast("New bill started", 'info');
           isBillSaved = false;
+          currentDocId = null;               // New context
+          updateSaveButtonLabel?.();
+          hasUserStarted = false;            // fresh state until the user edits
+          updateActionButtons?.();
+          // Ensure header is visible and checkbox unchecked on new bill
+          const hideHeaderCheckbox = document.getElementById('hideHeader');
+          const headerContainer = document.getElementById('header-container');
+          const billRef = document.getElementById('bill');
+          if (hideHeaderCheckbox) hideHeaderCheckbox.checked = false;
+          if (headerContainer) headerContainer.style.display = 'block';
+          if (billRef) billRef.classList.remove('header-hidden');
+          markActiveBill(null);
         };
 
 
@@ -146,6 +272,7 @@
       }
 
       try {
+        showLoader();
         const q = query(collection(db, 'bills'), orderBy('timestamp', 'desc'));
         const snapshot = await getDocs(q);
 
@@ -159,12 +286,21 @@
 
           const billItem = document.createElement('div');
           billItem.className = 'saved-bill-item group';
+          billItem.setAttribute('data-doc-id', docId);
+          const createdMs = bill.createdAt ? toMillis(bill.createdAt) : null;
+          const updatedMs = bill.updatedAt ? toMillis(bill.updatedAt) : null;
+          const hasBeenModified = !!updatedMs && (!createdMs || updatedMs > createdMs);
+          const label = hasBeenModified ? 'Modified' : 'Created';
+          const dateToShow = hasBeenModified
+            ? (bill.updatedAt)
+            : (bill.createdAt || bill.timestamp);
+
           billItem.innerHTML = `
   <div class="flex justify-between items-center">
     <div>
       <div class="font-bold">Name: ${bill.customName || 'Unnamed Bill'}</div>
       <div class="text-xs text-gray-500">
-        ${bill.timestamp ? new Date(bill.timestamp.toDate()).toLocaleString() : ''}
+        ${dateToShow ? label + ': ' + formatFirestoreTimestamp(dateToShow) : ''}
       </div>
     </div>
     <button title="Delete" onclick="deleteBill('${docId}', event)" class="text-red-600 hover:text-red-800 ml-2">
@@ -174,43 +310,206 @@
 `;
 
 
-          billItem.onclick = () => loadBill(docId, bill);
+          billItem.onclick = () => { loadBill(docId, bill); markActiveBill(docId); };
           savedBillsList.appendChild(billItem);
+          if (currentDocId && currentDocId === docId) billItem.classList.add('active');
         });
       } catch (error) {
         console.error('Error loading bills:', error);
-        showToast('❌ Error loading saved bills.');
+        showToast('Error loading saved bills.', 'error');
+      } finally {
+        hideLoader();
       }
       lucide.createIcons(); // ⬅️ This renders all <i data-lucide="..."> icons
 
     };
 
     window.loadBill = function (docId, billData) {
-      if (confirm('Load this bill? Current changes will be lost.')) {
-        document.getElementById('bill').innerHTML = billData.content;
+      const shouldConfirm = hasUserStarted && !isBillSaved;
+      if (!shouldConfirm || confirm('Load this bill? Current changes will be lost.')) {
+        const billEl = document.getElementById('bill');
+        billEl.innerHTML = billData.content;
+        billEl.dataset.customName = billData.customName || '';
+
+        // Re-bind listeners for newly injected elements
+        addInputListeners?.();
+        initializeAllRows?.();
+
+        // Mark context as editing existing document
+        currentDocId = docId;
+        isBillSaved = true;
+        updateSaveButtonLabel?.();
+        hasUserStarted = false; // not started until user changes something
+        updateActionButtons?.();
+
+        // Re-bind inner controls that live inside #bill
+        const invoiceItems = document.getElementById('invoiceItems');
+        const addItemBtn = document.getElementById('addItem');
+        const removeItemBtn = document.getElementById('removeItem');
+        const hideHeaderCheckbox = document.getElementById('hideHeader');
+        const headerContainer = document.getElementById('header-container');
+        const uploadInput = document.getElementById('uploadHeader');
+        const gstinEl = document.getElementById('gstinInput');
+
+        // Apply saved header visibility state if present; default to visible
+        const savedHide = !!billData.hideHeader;
+        if (hideHeaderCheckbox) hideHeaderCheckbox.checked = savedHide;
+        if (savedHide) {
+          if (headerContainer) headerContainer.style.display = 'none';
+          billEl.classList.add('header-hidden');
+        } else {
+          if (headerContainer) headerContainer.style.display = 'block';
+          billEl.classList.remove('header-hidden');
+        }
+
+        if (hideHeaderCheckbox && headerContainer) {
+          hideHeaderCheckbox.addEventListener('change', () => {
+            if (hideHeaderCheckbox.checked) {
+              headerContainer.style.display = 'none';
+              billEl.classList.add('header-hidden');
+            } else {
+              headerContainer.style.display = 'block';
+              billEl.classList.remove('header-hidden');
+            }
+          });
+        }
+
+        if (addItemBtn && invoiceItems) {
+          addItemBtn.addEventListener('click', () => {
+            const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
+            const newRow = document.createElement('tr');
+            newRow.className = 'text-center item-row';
+            newRow.innerHTML = `
+          <td>${rowCount}</td>
+          <td class="text-left" contenteditable="true" spellcheck="false"></td>
+          <td contenteditable="true" spellcheck="false"></td>
+          <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
+          <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
+        `;
+            invoiceItems.appendChild(newRow);
+            addInputListeners?.();
+          });
+        }
+
+        if (removeItemBtn && invoiceItems) {
+          removeItemBtn.addEventListener('click', () => {
+            const rows = invoiceItems.querySelectorAll('.item-row');
+            if (rows.length > 1) {
+              rows[rows.length - 1].remove();
+              updateRowNumbers?.();
+              calculateTotal?.();
+            } else {
+              alert('Cannot remove the last row. At least one item row must remain.');
+            }
+          });
+        }
+
+        if (uploadInput) {
+          uploadInput.addEventListener('change', function (event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function (e) {
+              const customHeaderURL = e.target.result;
+              const headerImg = document.getElementById('company-header-image');
+
+              if (headerImg) {
+                headerImg.src = customHeaderURL;
+                headerImg.setAttribute('data-custom', 'true');
+                showToast("Custom header applied for this session.", 'success');
+              }
+            };
+            reader.readAsDataURL(file);
+          });
+        }
+
+        // Re-attach GSTIN validation on loaded content
+        if (gstinEl) {
+          gstinEl.removeEventListener('blur', validateGSTINInput);
+          gstinEl.removeEventListener('input', handleGSTINInput);
+          gstinEl.addEventListener('blur', validateGSTINInput);
+          gstinEl.addEventListener('input', handleGSTINInput);
+        }
+
         calculateTotal?.();
         toggleSideNav?.();
+        markActiveBill(docId);
       }
     };
 
-    function showToast(message) {
-      const toast = document.getElementById('toast');
-      toast.textContent = message;
-      toast.classList.remove('hidden');
-      toast.classList.add('opacity-100');
+    // type: 'success' | 'error' | 'info' | 'warning'
+    function showToast(message, type = 'success') {
+      const root = document.getElementById('toastRoot');
+      if (!root) return;
+
+      const palette = {
+        success: { bar: 'bg-green-500', icon: 'check-circle', title: 'Success' },
+        error: { bar: 'bg-red-500', icon: 'x-circle', title: 'Error' },
+        info: { bar: 'bg-blue-500', icon: 'info', title: 'Info' },
+        warning: { bar: 'bg-yellow-500', icon: 'alert-triangle', title: 'Warning' }
+      };
+      const p = palette[type] || palette.success;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'relative min-w-[320px] max-w-[420px] rounded-xl bg-white shadow-xl border border-gray-200 overflow-hidden transform transition duration-300 ease-out';
+      wrapper.style.opacity = '0';
+      wrapper.style.transform = 'translateY(8px)';
+
+      wrapper.innerHTML = `
+        <div class="flex">
+          <div class="w-1 ${p.bar}"></div>
+          <div class="flex-1 p-4">
+            <div class="flex items-start gap-3">
+              <i data-lucide="${p.icon}" class="w-5 h-5 ${p.bar.replace('bg-', 'text-')}"></i>
+              <div class="flex-1">
+                <div class="font-semibold text-gray-900">${p.title}</div>
+                <div class="text-sm text-gray-600 mt-0.5">${message}</div>
+              </div>
+              <button class="text-gray-400 hover:text-gray-600" aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+        </div>`;
+
+      root.appendChild(wrapper);
+      // animate in
+      requestAnimationFrame(() => {
+        wrapper.style.opacity = '1';
+        wrapper.style.transform = 'translateY(0)';
+      });
+
+      // wire close button
+      const closeBtn = wrapper.querySelector('button');
+      if (closeBtn) closeBtn.addEventListener('click', () => dismiss());
+
+      // render icons
+      try { lucide.createIcons(); } catch {}
+
+      const hideTimer = setTimeout(() => dismiss(), 3000);
+
+      function dismiss() {
+        clearTimeout(hideTimer);
+        wrapper.style.opacity = '0';
+        wrapper.style.transform = 'translateY(8px)';
       setTimeout(() => {
-        toast.classList.add('hidden');
-      }, 3000);
+          wrapper.remove();
+        }, 250);
+      }
     }
+
+    // Expose for non-module scripts
+    window.showToast = showToast;
 
     // document.addEventListener('DOMContentLoaded', () => {
     //   loadSavedBills();
     // });
   </script>
-  <!-- Toast Message -->
-  <div id="toast"
-    class="fixed bottom-5 right-5 bg-green-600 text-white px-4 py-2 rounded shadow-lg hidden z-50 transition duration-300 ease-in-out">
-  </div>
+  <!-- Toast Container -->
+  
 
   <!-- Saved Bills Container Placeholder -->
   <style>
@@ -347,6 +646,12 @@
       background: #f5f5f5;
     }
 
+    /* Active saved bill highlight */
+    .saved-bill-item.active {
+      background: #eff6ff; /* blue-50 */
+      border-left: 4px solid #60a5fa; /* blue-400 */
+    }
+
     .main-content {
       transition: margin-left 0.3s ease;
     }
@@ -400,6 +705,13 @@
       </label>
     </div>
 
+    <div class="my-2 flex justify-end">
+      <div class="flex items-center">
+        <input type="checkbox" id="hideHeader" class="mr-1" />
+        <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
+      </div>
+    </div>
+
 
     <div id="bill" contenteditable="false" spellcheck="false" aria-label="Bill Generator">
       <!-- Header Image -->
@@ -423,19 +735,25 @@
               Detail of Consignee : <span class="font-extrabold">DARSHAN ENTERPRISES</span><br />
               A-29, Radhekrishna Residency Kapodara Patia, Valia Road<br />
               GIDC, Ankleshwar 393002, Dist- Bharuch (Gujarat)<br />
-              <span class="font-extrabold">GST TIN 24BCVPP7836H1ZW</span>
+              <span class="font-extrabold">GSTIN 24BCVPP7836H1ZW</span>
             </td>
-            <td colspan="6" style="text-align: left;" class="align-top p-1" contenteditable="true" spellcheck="false">
-              Bill No : DE-<br />
-              Date :<br />
-              P.O.No :<br />
-              P.O.Date :
+            <td colspan="6" style="text-align: left;" class="align-top p-1" contenteditable="false" spellcheck="false">
+              Bill No : DE-<span id="billNoInput" contenteditable="true" spellcheck="false" class="px-1"></span><br />
+              Date : <span id="dateInput" contenteditable="true" spellcheck="false" class="px-1"></span><br />
+              P.O.No : <span id="poNoInput" contenteditable="true" spellcheck="false" class="px-1"></span><br />
+              P.O.Date : <span id="poDateInput" contenteditable="true" spellcheck="false" class="px-1"></span>
             </td>
           </tr>
           <tr>
-            <td colspan="7" style="height: 80px;" class="align-top p-1" contenteditable="true" spellcheck="false">
-              BILLED TO,<br /><br /><br /><br />
-              <span class="font-extrabold">GST TIN</span>
+            <td colspan="7" style="height: 80px;" class="align-top p-1" contenteditable="false" spellcheck="false">
+              BILLED TO,<br />
+              <div id="billed-to-line1" class="font-bold" contenteditable="true" spellcheck="false" style="min-height: 20px;"></div>
+              <div id="billed-to-line2" contenteditable="true" spellcheck="false" style="min-height: 20px;"></div>
+              <div id="billed-to-line3" contenteditable="true" spellcheck="false" style="min-height: 20px;"></div>
+              <div class="mt-1">
+                <span class="font-extrabold">GSTIN</span> :
+                <span id="gstinInput" contenteditable="true" spellcheck="false" class="px-1"></span>
+              </div>
             </td>
           </tr>
           <tr>
@@ -511,10 +829,6 @@
       <div class="mt-2 text-[13px] font-normal" contenteditable="true" spellcheck="false">(Authorised Signatory)</div>
 
       <div class="flex justify-end mt-4 gap-2">
-        <div class="flex items-center">
-          <input type="checkbox" id="hideHeader" class="mr-1" />
-          <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
-        </div>
         <button id="removeItem" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">Remove
           Fields</button>
         <button id="addItem" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Add
@@ -539,6 +853,8 @@
     document.getElementById('toggleNav').addEventListener('click', toggleSideNav);
     document.getElementById('closeNav').addEventListener('click', toggleSideNav);
     document.getElementById('saveBtn').addEventListener('click', () => window.saveBill());
+    // Ensure initial label matches context (new unsaved bill)
+    updateSaveButtonLabel?.();
 
     // Verify html2pdf is loaded
     function checkHtml2Pdf() {
@@ -579,7 +895,8 @@
 
       // Add download button event listener
       if (downloadBtn) {
-        downloadBtn.addEventListener('click', () => {
+        downloadBtn.addEventListener('click', async () => {
+          if (downloadBtn.disabled) return; // respect disabled state
           const editableElements = bill.querySelectorAll('[contenteditable]');
           let isValid = true;
 
@@ -635,20 +952,28 @@
           if (cloneLabel) cloneLabel.remove();
 
 
+          // Compute filename from saved custom name if available
+          const rawName = (bill.dataset.customName || '').trim();
+          const sanitizedBase = rawName
+            ? rawName.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim()
+            : 'tax_invoice';
+
           const opt = {
             margin: [0, 0, 5, 0], // Top: 10mm, Right: 15mm, Bottom: 20mm, Left: 15mm
-            filename: 'tax_invoice.pdf',
+            filename: sanitizedBase + '.pdf',
             image: { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
           };
 
+          window.showLoader?.();
           html2pdf().set(opt).from(clone).save().then(() => {
             editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
             // Restore display state of the "Hide Header" checkbox and its label
             if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
             if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
-          });
+            window.showToast?.(`${sanitizedBase}.pdf has been downloaded`, 'success');
+          }).finally(() => window.hideLoader?.());
         });
       }
 
@@ -667,10 +992,15 @@
           if (headerImg) {
             headerImg.src = customHeaderURL;
             headerImg.setAttribute('data-custom', 'true'); // Optional flag
-            showToast("✅ Custom header applied for this session.");
+            showToast("Custom header applied for this session.", 'success');
           }
         };
         reader.readAsDataURL(file);
+      });
+      // Mark as started when header uploaded
+      uploadInput.addEventListener('change', function () {
+        hasUserStarted = true;
+        updateActionButtons?.();
       });
 
 
@@ -731,6 +1061,162 @@
       const input = event.target.textContent;
       if (/[0-9]/.test(input)) {
         event.target.textContent = input.replace(/[0-9]/g, '');
+      }
+    }
+
+    // Function to auto-capitalize and handle unit input
+    function handleUnitInputWithCapital(event) {
+      const input = event.target.textContent;
+      const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
+      const cursorOffset = range.startOffset;
+      
+      // Remove numbers
+      const cleanInput = input.replace(/[0-9]/g, '');
+      if (cleanInput !== input) {
+        event.target.textContent = cleanInput;
+      }
+      
+      // Auto capitalize
+      if (cleanInput !== cleanInput.toUpperCase()) {
+        event.target.textContent = cleanInput.toUpperCase();
+      }
+      
+      // Restore cursor position
+      try {
+        const newRange = document.createRange();
+        const textNode = event.target.firstChild || event.target;
+        const newOffset = Math.min(cursorOffset, textNode.textContent.length);
+        newRange.setStart(textNode, newOffset);
+        newRange.setEnd(textNode, newOffset);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      } catch (e) {
+        // Fallback if cursor restoration fails
+      }
+    }
+
+    // Function to auto-capitalize HSN/SAC input
+    function handleHSNInput(event) {
+      const input = event.target.textContent;
+      const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
+      const cursorOffset = range.startOffset;
+      
+      // Auto capitalize
+      if (input !== input.toUpperCase()) {
+        event.target.textContent = input.toUpperCase();
+      }
+      
+      // Restore cursor position
+      try {
+        const newRange = document.createRange();
+        const textNode = event.target.firstChild || event.target;
+        const newOffset = Math.min(cursorOffset, textNode.textContent.length);
+        newRange.setStart(textNode, newOffset);
+        newRange.setEnd(textNode, newOffset);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      } catch (e) {
+        // Fallback if cursor restoration fails
+      }
+    }
+
+    // Function to handle date input with DD-MM-YYYY format
+    function handleDateInput(event) {
+      const input = event.target.textContent;
+      const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
+      const cursorOffset = range.startOffset;
+      
+      // Only allow numbers and hyphens
+      let cleanInput = input.replace(/[^0-9-]/g, '');
+      if (cleanInput !== input) {
+        event.target.textContent = cleanInput;
+      }
+      
+      // Auto-insert hyphens
+      if (cleanInput.length >= 2 && cleanInput.charAt(2) !== '-') {
+        cleanInput = cleanInput.substring(0, 2) + '-' + cleanInput.substring(2);
+      }
+      if (cleanInput.length >= 5 && cleanInput.charAt(5) !== '-') {
+        cleanInput = cleanInput.substring(0, 5) + '-' + cleanInput.substring(5);
+      }
+      
+      // Limit to 10 characters (DD-MM-YYYY)
+      if (cleanInput.length > 10) {
+        cleanInput = cleanInput.substring(0, 10);
+      }
+      
+      // Update the input if changed
+      if (cleanInput !== event.target.textContent) {
+        event.target.textContent = cleanInput;
+      }
+      
+      // Restore cursor position with adjustment for auto-inserted hyphens
+      try {
+        const newRange = document.createRange();
+        const textNode = event.target.firstChild || event.target;
+        let newOffset = cursorOffset;
+        
+        // Adjust cursor position if hyphens were auto-inserted
+        if (cleanInput.length >= 3 && cleanInput.charAt(2) === '-' && cursorOffset >= 2) {
+          newOffset = cursorOffset + 1; // Move cursor after the hyphen
+        }
+        if (cleanInput.length >= 6 && cleanInput.charAt(5) === '-' && cursorOffset >= 5) {
+          newOffset = cursorOffset + 1; // Move cursor after the second hyphen
+        }
+        
+        newOffset = Math.min(newOffset, textNode.textContent.length);
+        newRange.setStart(textNode, newOffset);
+        newRange.setEnd(textNode, newOffset);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      } catch (e) {
+        // Fallback if cursor restoration fails
+      }
+    }
+
+    // Function to validate date format
+    function validateDateInput(event) {
+      const value = event.target.textContent.trim();
+      if (value && value.length === 10) {
+        const datePattern = /^(0[1-9]|[12][0-9]|3[01])-(0[1-9]|1[0-2])-\d{4}$/;
+        if (!datePattern.test(value)) {
+          showToast('Invalid date format. Use DD-MM-YYYY', 'warning');
+          event.target.classList.add('border-b', 'border-red-500');
+        } else {
+          event.target.classList.remove('border-b', 'border-red-500');
+        }
+      } else if (value && value.length > 0) {
+        event.target.classList.remove('border-b', 'border-red-500');
+      }
+    }
+
+    // Function to handle bill number input (numbers only)
+    function handleBillNoInput(event) {
+      const input = event.target.textContent;
+      const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
+      const cursorOffset = range.startOffset;
+      
+      // Only allow numbers
+      const cleanInput = input.replace(/[^0-9]/g, '');
+      if (cleanInput !== input) {
+        event.target.textContent = cleanInput;
+      }
+      
+      // Restore cursor position
+      try {
+        const newRange = document.createRange();
+        const textNode = event.target.firstChild || event.target;
+        const newOffset = Math.min(cursorOffset, textNode.textContent.length);
+        newRange.setStart(textNode, newOffset);
+        newRange.setEnd(textNode, newOffset);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      } catch (e) {
+        // Fallback if cursor restoration fails
       }
     }
 
@@ -802,12 +1288,51 @@
         cell.removeEventListener('input', handleUnitInput);
         cell.removeEventListener('blur', validateUnit);
         cell.removeEventListener('input', preventNumberInput);
+        cell.removeEventListener('input', handleUnitInputWithCapital);
 
         // Add new listeners
-        cell.addEventListener('input', handleUnitInput);
+        cell.addEventListener('input', handleUnitInputWithCapital);
         cell.addEventListener('blur', validateUnit);
-        cell.addEventListener('input', preventNumberInput);
       });
+
+      // Add HSN/SAC auto-capitalization
+      const hsnCells = document.querySelectorAll('td:nth-child(3)');
+      hsnCells.forEach(cell => {
+        if (cell.classList.contains('unit-cell')) return; // Skip unit cells
+        cell.removeEventListener('input', handleHSNInput);
+        cell.addEventListener('input', handleHSNInput);
+      });
+
+      // Add date input validation
+      const dateInputEl = document.getElementById('dateInput');
+      if (dateInputEl) {
+        dateInputEl.removeEventListener('input', handleDateInput);
+        dateInputEl.removeEventListener('blur', validateDateInput);
+        dateInputEl.addEventListener('input', handleDateInput);
+        dateInputEl.addEventListener('blur', validateDateInput);
+      }
+
+      // Add P.O.Date input validation
+      const poDateInputEl = document.getElementById('poDateInput');
+      if (poDateInputEl) {
+        poDateInputEl.removeEventListener('input', handleDateInput);
+        poDateInputEl.removeEventListener('blur', validateDateInput);
+        poDateInputEl.addEventListener('input', handleDateInput);
+        poDateInputEl.addEventListener('blur', validateDateInput);
+      }
+
+      // Add Bill No input validation
+      const billNoInputEl = document.getElementById('billNoInput');
+      if (billNoInputEl) {
+        billNoInputEl.removeEventListener('input', handleBillNoInput);
+        billNoInputEl.addEventListener('input', handleBillNoInput);
+      }
+
+      // Add P.O.No input validation (no restrictions)
+      const poNoInputEl = document.getElementById('poNoInput');
+      if (poNoInputEl) {
+        // No validation needed - accepts any characters
+      }
 
       // Add number validation to quantity and rate cells
       const quantityCells = document.querySelectorAll('.quantity-cell');
@@ -822,6 +1347,59 @@
         cell.removeEventListener('input', allowNumbersAndDecimal);
         cell.addEventListener('input', allowNumbersAndDecimal);
       });
+
+      // Add GSTIN validation
+      const gstinEl = document.getElementById('gstinInput');
+      if (gstinEl) {
+        gstinEl.removeEventListener('blur', validateGSTINInput);
+        gstinEl.removeEventListener('input', handleGSTINInput);
+        gstinEl.addEventListener('blur', validateGSTINInput);
+        gstinEl.addEventListener('input', handleGSTINInput);
+      }
+    }
+
+    function validateGSTINInput(event) {
+      const value = event.target.textContent.trim();
+      if (value && !validateGSTIN(value)) {
+        showToast('Invalid GSTIN format. Please check.', 'warning');
+        event.target.classList.add('border-b', 'border-red-500');
+      } else {
+        event.target.classList.remove('border-b', 'border-red-500');
+      }
+    }
+
+    function handleGSTINInput(event) {
+      let value = event.target.textContent;
+      const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
+      const cursorOffset = range.startOffset;
+      
+      // Limit to 15 characters
+      if (value.length > 15) {
+        value = value.substring(0, 15);
+        event.target.textContent = value;
+      }
+      
+      // Auto capitalize
+      if (value !== value.toUpperCase()) {
+        event.target.textContent = value.toUpperCase();
+      }
+      
+      // Make text bold
+      event.target.style.fontWeight = 'bold';
+      
+      // Restore cursor position
+      try {
+        const newRange = document.createRange();
+        const textNode = event.target.firstChild || event.target;
+        const newOffset = Math.min(cursorOffset, textNode.textContent.length);
+        newRange.setStart(textNode, newOffset);
+        newRange.setEnd(textNode, newOffset);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      } catch (e) {
+        // Fallback if cursor restoration fails
+      }
     }
 
     // Initialize listeners for all existing rows
@@ -831,11 +1409,50 @@
         cell.removeEventListener('input', handleUnitInput);
         cell.removeEventListener('blur', validateUnit);
         cell.removeEventListener('input', preventNumberInput);
+        cell.removeEventListener('input', handleUnitInputWithCapital);
 
-        cell.addEventListener('input', handleUnitInput);
+        cell.addEventListener('input', handleUnitInputWithCapital);
         cell.addEventListener('blur', validateUnit);
-        cell.addEventListener('input', preventNumberInput);
       });
+
+      // Add HSN/SAC auto-capitalization for existing rows
+      const hsnCells = document.querySelectorAll('td:nth-child(3)');
+      hsnCells.forEach(cell => {
+        if (cell.classList.contains('unit-cell')) return; // Skip unit cells
+        cell.removeEventListener('input', handleHSNInput);
+        cell.addEventListener('input', handleHSNInput);
+      });
+
+      // Add date input validation for existing rows
+      const dateInputEl = document.getElementById('dateInput');
+      if (dateInputEl) {
+        dateInputEl.removeEventListener('input', handleDateInput);
+        dateInputEl.removeEventListener('blur', validateDateInput);
+        dateInputEl.addEventListener('input', handleDateInput);
+        dateInputEl.addEventListener('blur', validateDateInput);
+      }
+
+      // Add P.O.Date input validation for existing rows
+      const poDateInputEl = document.getElementById('poDateInput');
+      if (poDateInputEl) {
+        poDateInputEl.removeEventListener('input', handleDateInput);
+        poDateInputEl.removeEventListener('blur', validateDateInput);
+        poDateInputEl.addEventListener('input', handleDateInput);
+        poDateInputEl.addEventListener('blur', validateDateInput);
+      }
+
+      // Add Bill No input validation for existing rows
+      const billNoInputEl = document.getElementById('billNoInput');
+      if (billNoInputEl) {
+        billNoInputEl.removeEventListener('input', handleBillNoInput);
+        billNoInputEl.addEventListener('input', handleBillNoInput);
+      }
+
+      // Add P.O.No input validation for existing rows (no restrictions)
+      const poNoInputEl = document.getElementById('poNoInput');
+      if (poNoInputEl) {
+        // No validation needed - accepts any characters
+      }
 
       // Initialize quantity and rate cells
       const quantityCells = document.querySelectorAll('.quantity-cell');
@@ -880,6 +1497,12 @@
       return `${rupeeWords} Rupees and ${paisaWords} Paisa Only.`;
     }
 
+    // Validate GSTIN format
+    function validateGSTIN(gstin) {
+      const pattern = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}Z[0-9A-Z]{1}$/;
+      return pattern.test((gstin || '').toUpperCase());
+    }
+
     function calculateTotal() {
       const rows = invoiceItems.querySelectorAll('.item-row');
       let total = 0;
@@ -919,6 +1542,12 @@
     //   checkHtml2Pdf();
     // });
   </script>
+  <!-- Toast Container -->
+  <div id="toastRoot" class="fixed bottom-5 right-5 z-50 flex flex-col gap-3"></div>
+  <!-- Global Loader Overlay -->
+  <div id="loaderOverlay" class="hidden fixed inset-0 bg-white/70 backdrop-blur-sm flex items-center justify-center z-40">
+    <dotlottie-wc src="https://lottie.host/0574a663-32d8-461f-82ef-c7fdcd5a15e9/XJ2s2RFpYR.lottie" style="width: 220px;height: 220px" speed="1" autoplay loop></dotlottie-wc>
+  </div>
 </body>
 
 </html>
