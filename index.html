@@ -571,6 +571,10 @@
       vertical-align: top;
     }
 
+    .invoice-title {
+      font-size: 18px;
+    }
+
     th {
       font-weight: 700;
       text-align: center;
@@ -624,6 +628,8 @@
       transition: left 0.3s ease;
       z-index: 1000;
       padding: 1rem;
+      display: flex;
+      flex-direction: column;
     }
 
     .side-nav.open {
@@ -632,8 +638,8 @@
 
     .saved-bills-list {
       margin-top: 1rem;
-      max-height: calc(100vh - 150px);
       overflow-y: auto;
+      flex: 1;
     }
 
     .saved-bill-item {
@@ -663,6 +669,60 @@
 </head>
 
 <body>
+  <div id="loginContainer" class="fixed inset-0 bg-gray-100 flex items-center justify-center z-[2000]">
+    <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-sm">
+      <h2 class="text-2xl font-bold mb-2 text-center text-gray-800">Bill Generator Login</h2>
+      <p class="text-center text-sm text-gray-600 mb-4">Enter 4-digit PIN</p>
+      <div id="loginError" class="hidden bg-red-100 text-red-700 p-2 rounded mb-4 text-sm">
+        Invalid PIN
+      </div>
+      <div class="mb-6 flex justify-center gap-3">
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+      </div>
+      <button id="loginButton" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+        Login
+      </button>
+    </div>
+  </div>
+
+  <style>
+    #mainContent { display: none; }
+  </style>
+  <div id="settingsModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000] hidden">
+    <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-md">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-xl font-bold text-gray-800">Change PIN</h2>
+        <button id="closeSettingsModal" class="text-gray-500 hover:text-gray-700">
+          <i data-lucide="x" class="w-6 h-6"></i>
+        </button>
+      </div>
+
+      <div id="settingsError" class="hidden bg-red-100 text-red-700 p-2 rounded mb-4 text-sm"></div>
+      <div id="settingsSuccess" class="hidden bg-green-100 text-green-700 p-2 rounded mb-4 text-sm"></div>
+
+      <div class="space-y-4">
+        <div>
+          <label for="currentPin" class="block text-sm font-medium text-gray-700">Current PIN</label>
+          <input type="password" id="currentPin" inputmode="numeric" maxlength="4" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
+        </div>
+        <div>
+          <label for="newPin" class="block text-sm font-medium text-gray-700">New PIN</label>
+          <input type="password" id="newPin" inputmode="numeric" maxlength="4" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" autocomplete="off">
+        </div>
+        <div>
+          <label for="confirmNewPin" class="block text-sm font-medium text-gray-700">Confirm New PIN</label>
+          <input type="password" id="confirmNewPin" inputmode="numeric" maxlength="4" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
+        </div>
+      </div>
+
+      <button id="saveCredentialsBtn" class="mt-6 w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
+        Save New PIN
+      </button>
+    </div>
+  </div>
   <!-- Side Navigation -->
   <div class="side-nav" id="sideNav">
     <div class="flex justify-between items-center mb-4">
@@ -675,6 +735,17 @@
     </div>
     <div class="saved-bills-list" id="savedBillsList">
       <!-- Saved bills will be listed here -->
+    </div>
+    <div class="mt-8 pt-4 border-t border-gray-200">
+      <h3 class="text-lg font-bold mb-4">Account</h3>
+      <button id="changeCredentialsBtn" class="w-full text-left py-2 px-2 rounded-md hover:bg-gray-100 transition flex items-center gap-2">
+        <i data-lucide="key" class="w-4 h-4"></i>
+        <span>Change Credentials</span>
+      </button>
+      <button id="logoutBtn" class="w-full text-left py-2 px-2 rounded-md hover:bg-red-50 transition flex items-center gap-2 text-red-600 hover:text-red-700">
+        <i data-lucide="log-out" class="w-4 h-4"></i>
+        <span>Logout</span>
+      </button>
     </div>
   </div>
 
@@ -707,7 +778,7 @@
 
     <div class="my-2 flex justify-end">
       <div class="flex items-center">
-        <input type="checkbox" id="hideHeader" class="mr-1" />
+        <input type="checkbox" id="hideHeader" class="mr-1" checked />
         <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
       </div>
     </div>
@@ -724,7 +795,7 @@
         <thead>
           <br /><br />
           <tr>
-            <th colspan="7" class="bold text-center py-1" contenteditable="true" spellcheck="false">Tax <span
+            <th colspan="7" class="bold text-center py-1 invoice-title" contenteditable="true" spellcheck="false">Tax <span
                 class="font-extrabold">INVOICE</span></th>
           </tr>
         </thead>
@@ -842,6 +913,202 @@
     integrity="sha512-GsLlZN/3F2ErC5ifS5QtgpiJtWd43JWSuIgh7mbzZ8zBps+dvLusV+eNQATqgA/HdeKFVgA5v3S/cIrLF7QnIg=="
     crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script>
+    // --- Simple Client-side Authentication ---
+    const DEFAULT_CREDENTIALS = { username: 'mata', password: 'Mata@1316', pin: '1316' };
+
+    function getCredentials() {
+      try {
+        const raw = localStorage.getItem('appCredentials');
+        if (!raw) return { ...DEFAULT_CREDENTIALS };
+        const parsed = JSON.parse(raw);
+        if (!parsed?.username || !parsed?.password) return { ...DEFAULT_CREDENTIALS };
+        return parsed;
+      } catch (e) {
+        return { ...DEFAULT_CREDENTIALS };
+      }
+    }
+
+    function setCredentials(username, password, pin) {
+      const toStore = { username: String(username || '').trim(), password: String(password || ''), pin: String(pin || '1316') };
+      localStorage.setItem('appCredentials', JSON.stringify(toStore));
+    }
+
+    function showMainContent() {
+      const main = document.getElementById('mainContent');
+      const login = document.getElementById('loginContainer');
+      if (login) login.style.display = 'none';
+      if (main) main.style.display = 'block';
+    }
+
+    function showLogin() {
+      const main = document.getElementById('mainContent');
+      const login = document.getElementById('loginContainer');
+      if (main) main.style.display = 'none';
+      if (login) login.style.display = 'flex';
+    }
+
+    function checkAuthentication() {
+      const isLoggedIn = sessionStorage.getItem('isLoggedIn') === 'true';
+      if (isLoggedIn) {
+        showMainContent();
+      } else {
+        showLogin();
+      }
+    }
+
+    function handleLoginAttempt() {
+      const { pin: storedPin } = getCredentials();
+      const digits = Array.from(document.querySelectorAll('.pin-input')).map(i => (i.value || '').trim()).join('');
+      const errorEl = document.getElementById('loginError');
+      if (digits === (storedPin || '1316')) {
+        sessionStorage.setItem('isLoggedIn', 'true');
+        showMainContent();
+        try { window.showToast?.('Login successful', 'success'); } catch {}
+      } else {
+        if (errorEl) {
+          errorEl.classList.remove('hidden');
+          setTimeout(() => errorEl.classList.add('hidden'), 2000);
+        }
+      }
+    }
+
+    function handleCredentialChange() {
+      const creds = getCredentials();
+      const cur = (document.getElementById('currentPin')?.value || '').replace(/\D/g, '');
+      const newPin = (document.getElementById('newPin')?.value || '').replace(/\D/g, '');
+      const confirm = (document.getElementById('confirmNewPin')?.value || '').replace(/\D/g, '');
+
+      const err = document.getElementById('settingsError');
+      const ok = document.getElementById('settingsSuccess');
+      const showErr = (msg) => { if (err) { err.textContent = msg; err.classList.remove('hidden'); } if (ok) ok.classList.add('hidden'); };
+      const showOk = (msg) => { if (ok) { ok.textContent = msg; ok.classList.remove('hidden'); } if (err) err.classList.add('hidden'); };
+
+      if (cur !== (creds.pin || '1316')) {
+        showErr('Current PIN is incorrect');
+        window.showToast?.('Current PIN is incorrect', 'error');
+        return;
+      }
+      if (!/^\d{4}$/.test(newPin)) {
+        showErr('New PIN must be exactly 4 digits');
+        return;
+      }
+      if (newPin !== confirm) {
+        showErr('New PINs do not match');
+        return;
+      }
+
+      setCredentials(creds.username, creds.password, newPin);
+      // Clear fields and close modal
+      ['currentPin','newPin','confirmNewPin'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      document.getElementById('settingsModal')?.classList.add('hidden');
+      showOk('PIN updated successfully');
+      window.showToast?.('PIN updated successfully', 'success');
+    }
+
+    function handleLogout() {
+      sessionStorage.removeItem('isLoggedIn');
+      // Hide app, show login
+      const main = document.getElementById('mainContent');
+      const side = document.getElementById('sideNav');
+      const login = document.getElementById('loginContainer');
+      if (main) main.style.display = 'none';
+      if (side) side.classList.remove('open');
+      if (login) login.style.display = 'flex';
+      // Clear login fields
+      const u = document.getElementById('username');
+      const p = document.getElementById('password');
+      if (u) u.value = '';
+      if (p) p.value = '';
+      window.showToast?.('Logged out', 'info');
+    }
+
+    // Change Password Modal Logic
+    function openChangePasswordModal() {
+      document.getElementById('changePasswordModal')?.classList.remove('hidden');
+    }
+    function closeChangePasswordModal() {
+      document.getElementById('changePasswordModal')?.classList.add('hidden');
+      const fields = ['currentPassword', 'newPassword', 'confirmPassword'];
+      fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    }
+    function handleChangePasswordSave() {
+      const creds = getCredentials();
+      const current = document.getElementById('currentPassword')?.value || '';
+      const next = document.getElementById('newPassword')?.value || '';
+      const confirm = document.getElementById('confirmPassword')?.value || '';
+
+      if (current !== creds.password) {
+        window.showToast?.('Current password is incorrect', 'error');
+        return;
+      }
+      if (!next || next.length < 6) {
+        window.showToast?.('New password must be at least 6 characters', 'warning');
+        return;
+      }
+      if (next !== confirm) {
+        window.showToast?.('New passwords do not match', 'error');
+        return;
+      }
+      setCredentials(creds.username, next);
+      window.showToast?.('Password updated successfully', 'success');
+      closeChangePasswordModal();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // Ensure defaults exist in storage lazily
+      const existing = getCredentials();
+      if (!localStorage.getItem('appCredentials')) {
+        setCredentials(existing.username, existing.password, existing.pin || '1316');
+      }
+
+      // Auth check and login wiring
+      checkAuthentication();
+      const loginBtn = document.getElementById('loginButton');
+      if (loginBtn) loginBtn.addEventListener('click', handleLoginAttempt);
+      // PIN auto-advance and Enter behavior
+      const pinInputs = Array.from(document.querySelectorAll('.pin-input'));
+      pinInputs.forEach((input, idx) => {
+        input.addEventListener('input', () => {
+          input.value = input.value.replace(/\D/g, '').slice(0, 1);
+          if (input.value && idx < pinInputs.length - 1) {
+            pinInputs[idx + 1].focus();
+          }
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Backspace' && !input.value && idx > 0) {
+            pinInputs[idx - 1].focus();
+          }
+          if (e.key === 'Enter') handleLoginAttempt();
+        });
+        input.addEventListener('paste', (e) => {
+          const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+          if (!text) return;
+          e.preventDefault();
+          const digits = text.replace(/\D/g, '').slice(0, pinInputs.length).split('');
+          digits.forEach((d, j) => { if (pinInputs[idx + j]) pinInputs[idx + j].value = d; });
+          const lastIndex = Math.min(idx + digits.length - 1, pinInputs.length - 1);
+          pinInputs[lastIndex].focus();
+        });
+      });
+
+      // Change password wiring
+      // Settings modal wiring
+      const settingsBtn = document.getElementById('changeCredentialsBtn');
+      if (settingsBtn) settingsBtn.addEventListener('click', () => {
+        document.getElementById('settingsModal')?.classList.remove('hidden');
+        try { lucide.createIcons(); } catch {}
+      });
+      const closeSettings = document.getElementById('closeSettingsModal');
+      if (closeSettings) closeSettings.addEventListener('click', () => {
+        document.getElementById('settingsModal')?.classList.add('hidden');
+      });
+      const saveCreds = document.getElementById('saveCredentialsBtn');
+      if (saveCreds) saveCreds.addEventListener('click', handleCredentialChange);
+
+      // Logout wiring
+      const logoutBtn = document.getElementById('logoutBtn');
+      if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
+    });
     function toggleSideNav() {
       const sideNav = document.getElementById('sideNav');
       const mainContent = document.getElementById('mainContent');
@@ -880,8 +1147,16 @@
       addInputListeners();
       initializeAllRows();
 
-      // Add event listener for hide header checkbox
+      // Apply initial state for hide header checkbox
       if (hideHeaderCheckbox && headerContainer) {
+        if (hideHeaderCheckbox.checked) {
+          headerContainer.style.display = 'none';
+          bill.classList.add('header-hidden');
+        } else {
+          headerContainer.style.display = 'block';
+          bill.classList.remove('header-hidden');
+        }
+        // Add event listener for hide header checkbox
         hideHeaderCheckbox.addEventListener('change', () => {
           if (hideHeaderCheckbox.checked) {
             headerContainer.style.display = 'none';
@@ -1542,6 +1817,7 @@
     //   checkHtml2Pdf();
     // });
   </script>
+  
   <!-- Toast Container -->
   <div id="toastRoot" class="fixed bottom-5 right-5 z-50 flex flex-col gap-3"></div>
   <!-- Global Loader Overlay -->
