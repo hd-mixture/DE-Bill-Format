@@ -100,7 +100,7 @@
       const saveBtn = document.getElementById('saveBtn');
       const downloadBtn = document.getElementById('downloadBtn');
       const saveDisabled = !hasUserStarted; // user must start editing to save
-      const downloadDisabled = !currentDocId; // require saved bill to download
+      const downloadDisabled = false; // Allow download even without saving
 
       if (saveBtn) {
         saveBtn.disabled = saveDisabled;
@@ -127,6 +127,8 @@
       const billHTML = document.getElementById('bill').innerHTML;
       const hideHeaderCheckboxRef = document.getElementById('hideHeader');
       const hideHeaderState = !!hideHeaderCheckboxRef?.checked;
+      const includeGSTCheckboxRef = document.getElementById('includeGST');
+      const includeGSTState = includeGSTCheckboxRef ? includeGSTCheckboxRef.checked : true;
 
       try {
         showLoader();
@@ -135,6 +137,7 @@
           await updateDoc(doc(db, 'bills', currentDocId), {
             content: billHTML,
             hideHeader: hideHeaderState,
+            includeGST: includeGSTState,
             updatedAt: serverTimestamp(),
             timestamp: serverTimestamp()
           });
@@ -152,6 +155,7 @@
       const billData = {
             content: billHTML,
             hideHeader: hideHeaderState,
+            includeGST: includeGSTState,
             createdAt: now,
             updatedAt: now,
             timestamp: now,
@@ -263,6 +267,51 @@
           if (hideHeaderCheckbox) hideHeaderCheckbox.checked = false;
           if (headerContainer) headerContainer.style.display = 'block';
           if (billRef) billRef.classList.remove('header-hidden');
+          // Reset GST toggle to "Include GST" (checked) for new bill
+          const includeGSTCheckbox = document.getElementById('includeGST');
+          const gstToggleLabel = document.getElementById('gstToggleLabel');
+          const gstRow = document.getElementById('gst-row');
+          if (includeGSTCheckbox) {
+            includeGSTCheckbox.checked = true;
+            if (gstToggleLabel) gstToggleLabel.textContent = 'Include GST';
+            if (gstRow) gstRow.style.display = '';
+          }
+          // Re-attach button event listeners for Add Item and Remove Fields
+          const invoiceItems = document.getElementById('invoiceItems');
+          const addItemBtn = document.getElementById('addItem');
+          const removeItemBtn = document.getElementById('removeItem');
+          
+          if (addItemBtn && invoiceItems) {
+            addItemBtn.addEventListener('click', () => {
+              const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
+              const newRow = document.createElement('tr');
+              newRow.className = 'text-center item-row';
+              newRow.innerHTML = `
+                <td>${rowCount}</td>
+                <td class="text-left" contenteditable="true" spellcheck="false"></td>
+                <td contenteditable="true" spellcheck="false"></td>
+                <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
+                <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
+                <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
+                <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
+              `;
+              invoiceItems.appendChild(newRow);
+              addInputListeners();
+              calculateTotal?.();
+            });
+          }
+          if (removeItemBtn && invoiceItems) {
+            removeItemBtn.addEventListener('click', () => {
+              const rows = invoiceItems.querySelectorAll('.item-row');
+              if (rows.length > 1) {
+                rows[rows.length - 1].remove();
+                updateRowNumbers?.();
+                calculateTotal?.();
+              } else {
+                alert('Cannot remove the last row. At least one item row must remain.');
+              }
+            });
+          }
           markActiveBill(null);
         };
 
@@ -374,8 +423,67 @@
           });
         }
 
-        if (addItemBtn && invoiceItems) {
-          addItemBtn.addEventListener('click', () => {
+        // Apply saved GST toggle state if present; default to Include GST (true)
+        const includeGSTCheckbox = document.getElementById('includeGST');
+        const gstToggleLabel = document.getElementById('gstToggleLabel');
+        const gstRow = document.getElementById('gst-row');
+        const savedIncludeGST = billData.includeGST !== undefined ? billData.includeGST : true;
+        
+        if (includeGSTCheckbox) {
+          // Remove old event listeners by cloning the checkbox
+          const newGSTCheckbox = includeGSTCheckbox.cloneNode(true);
+          includeGSTCheckbox.parentNode.replaceChild(newGSTCheckbox, includeGSTCheckbox);
+          
+          // Get fresh reference
+          const freshGSTCheckbox = document.getElementById('includeGST');
+          freshGSTCheckbox.checked = savedIncludeGST;
+          
+          // Update display immediately
+          if (gstToggleLabel) {
+            gstToggleLabel.textContent = savedIncludeGST ? 'Include GST' : 'Without GST';
+          }
+          if (gstRow) {
+            gstRow.style.display = savedIncludeGST ? '' : 'none';
+          }
+          
+          // Re-attach event listener for dynamic GST toggle
+          const updateGSTDisplay = () => {
+            const includeGST = freshGSTCheckbox.checked;
+            if (gstToggleLabel) {
+              gstToggleLabel.textContent = includeGST ? 'Include GST' : 'Without GST';
+            }
+            if (gstRow) {
+              gstRow.style.display = includeGST ? '' : 'none';
+            }
+            calculateTotal?.();
+            // Mark bill as unsaved when GST toggle changes
+            isBillSaved = false;
+            hasUserStarted = true;
+            updateActionButtons?.();
+          };
+          
+          freshGSTCheckbox.addEventListener('change', updateGSTDisplay);
+        }
+        
+        // Recalculate total after loading GST state
+        calculateTotal?.();
+
+        // Remove old event listeners if they exist (clone the button to remove all listeners)
+        if (addItemBtn) {
+          const newAddBtn = addItemBtn.cloneNode(true);
+          addItemBtn.parentNode.replaceChild(newAddBtn, addItemBtn);
+        }
+        if (removeItemBtn) {
+          const newRemoveBtn = removeItemBtn.cloneNode(true);
+          removeItemBtn.parentNode.replaceChild(newRemoveBtn, removeItemBtn);
+        }
+
+        // Get fresh references after cloning
+        const freshAddItemBtn = document.getElementById('addItem');
+        const freshRemoveItemBtn = document.getElementById('removeItem');
+
+        if (freshAddItemBtn && invoiceItems) {
+          freshAddItemBtn.addEventListener('click', () => {
             const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
             const newRow = document.createElement('tr');
             newRow.className = 'text-center item-row';
@@ -390,11 +498,12 @@
         `;
             invoiceItems.appendChild(newRow);
             addInputListeners?.();
+            calculateTotal?.();
           });
         }
 
-        if (removeItemBtn && invoiceItems) {
-          removeItemBtn.addEventListener('click', () => {
+        if (freshRemoveItemBtn && invoiceItems) {
+          freshRemoveItemBtn.addEventListener('click', () => {
             const rows = invoiceItems.querySelectorAll('.item-row');
             if (rows.length > 1) {
               rows[rows.length - 1].remove();
@@ -523,7 +632,10 @@
     @media print {
 
       #hideHeader,
-      label[for="hideHeader"] {
+      label[for="hideHeader"],
+      #includeGST,
+      label[for="includeGST"],
+      #gstToggleLabel {
         display: none !important;
       }
     }
@@ -779,7 +891,14 @@
       </label>
     </div>
 
-    <div class="my-2 flex justify-end">
+    <div class="my-2 flex justify-end gap-4">
+      <div class="flex items-center">
+        <label class="relative inline-flex items-center cursor-pointer">
+          <input type="checkbox" id="includeGST" class="sr-only peer" checked />
+          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+          <span class="ml-3 text-sm font-medium text-gray-700" id="gstToggleLabel">Include GST</span>
+        </label>
+      </div>
       <div class="flex items-center">
         <input type="checkbox" id="hideHeader" class="mr-1" checked />
         <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
@@ -857,7 +976,7 @@
             <td colspan="6" class="text-right pr-1 font-bold">Total =</td>
             <td class="text-right pr-1 total-amount" contenteditable="false">0.00</td>
           </tr>
-          <tr>
+          <tr id="gst-row">
             <td colspan="2" class="p-1" contenteditable="true" spellcheck="false">
               BANK Name : State Bank of India<br />
               Account No : 42085596249<br />
@@ -1171,29 +1290,102 @@
         });
       }
 
+      // Initialize GST toggle - Make it fully dynamic
+      const includeGSTCheckbox = document.getElementById('includeGST');
+      const gstToggleLabel = document.getElementById('gstToggleLabel');
+      const gstRow = document.getElementById('gst-row');
+      
+      if (includeGSTCheckbox) {
+        // Function to update GST display and calculations dynamically
+        const updateGSTDisplay = () => {
+          const includeGST = includeGSTCheckbox.checked;
+          
+          // Update label
+          if (gstToggleLabel) {
+            gstToggleLabel.textContent = includeGST ? 'Include GST' : 'Without GST';
+          }
+          
+          // Show/hide GST row dynamically
+          if (gstRow) {
+            gstRow.style.display = includeGST ? '' : 'none';
+          }
+          
+          // Immediately recalculate totals with new GST state
+          // This ensures it works even after all fields are filled
+          setTimeout(() => {
+            calculateTotal?.();
+          }, 0);
+          
+          // Mark bill as unsaved when GST toggle changes
+          isBillSaved = false;
+          hasUserStarted = true;
+          updateActionButtons?.();
+        };
+        
+        // Apply initial state
+        updateGSTDisplay();
+        
+        // Add event listener for dynamic GST toggle
+        // This will work at any time, even after all fields are filled
+        includeGSTCheckbox.addEventListener('change', updateGSTDisplay);
+      }
+
       // Add download button event listener
       if (downloadBtn) {
         downloadBtn.addEventListener('click', async () => {
           if (downloadBtn.disabled) return; // respect disabled state
-          const editableElements = bill.querySelectorAll('[contenteditable]');
-          let isValid = true;
-
-          editableElements.forEach(el => {
-            if (el.innerText.trim() === '') {
-              isValid = false;
-              el.classList.add('border-red-500');
-            } else {
-              el.classList.remove('border-red-500');
+          
+          try {
+            // Check if html2pdf is loaded
+            if (typeof html2pdf === 'undefined') {
+              window.showToast?.('PDF library is loading. Please wait a moment and try again.', 'warning');
+              setTimeout(() => {
+                if (typeof html2pdf !== 'undefined') {
+                  window.showToast?.('PDF library loaded. Please try downloading again.', 'info');
+                }
+              }, 1000);
+              return;
             }
-          });
 
-          if (!isValid) {
-            alert('Please fill out all required fields before downloading the PDF.');
-            return;
-          }
+            // Optional: Check only essential fields (not all fields)
+            // This allows download even if some optional fields are empty
+            const essentialFields = [
+              document.getElementById('billNoInput'),
+              document.getElementById('dateInput'),
+              document.getElementById('billed-to-line1')
+            ];
+            
+            let hasEssentialData = false;
+            essentialFields.forEach(field => {
+              if (field && field.textContent.trim()) {
+                hasEssentialData = true;
+              }
+            });
 
-          // Temporarily disable contenteditable
-          editableElements.forEach(el => el.setAttribute('contenteditable', 'false'));
+            // Check if there's at least one item with data
+            const invoiceItems = document.getElementById('invoiceItems');
+            if (invoiceItems) {
+              const rows = invoiceItems.querySelectorAll('.item-row');
+              rows.forEach(row => {
+                const desc = row.children[1]?.textContent?.trim();
+                const qty = parseFloat(row.children[3]?.textContent) || 0;
+                const rate = parseFloat(row.children[5]?.textContent) || 0;
+                if (desc || qty > 0 || rate > 0) {
+                  hasEssentialData = true;
+                }
+              });
+            }
+
+            if (!hasEssentialData) {
+              const proceed = confirm('Bill appears to be empty. Do you still want to download the PDF?');
+              if (!proceed) return;
+            }
+
+            // Get all editable elements
+            const editableElements = bill.querySelectorAll('[contenteditable]');
+            
+            // Temporarily disable contenteditable
+            editableElements.forEach(el => el.setAttribute('contenteditable', 'false'));
 
           // Temporarily hide the "Hide Header" checkbox and its label for PDF export
           const hideHeaderCheckbox = document.getElementById('hideHeader');
@@ -1228,7 +1420,12 @@
           const cloneLabel = clone.querySelector('label[for="hideHeader"]');
           if (cloneCheckbox) cloneCheckbox.remove();
           if (cloneLabel) cloneLabel.remove();
-
+          
+          // Remove GST toggle from clone (it's outside bill, but check anyway)
+          const cloneGSTToggle = clone.querySelector('#includeGST');
+          const cloneGSTLabel = clone.querySelector('#gstToggleLabel');
+          if (cloneGSTToggle) cloneGSTToggle.remove();
+          if (cloneGSTLabel) cloneGSTLabel.remove();
 
           // Compute filename from saved custom name if available
           const rawName = (bill.dataset.customName || '').trim();
@@ -1237,10 +1434,10 @@
             : 'tax_invoice';
 
           const opt = {
-            margin: [0, 0, 5, 0], // Top: 10mm, Right: 15mm, Bottom: 20mm, Left: 15mm
+            margin: [0, 0, 5, 0], // Top: 0mm, Right: 0mm, Bottom: 5mm, Left: 0mm
             filename: sanitizedBase + '.pdf',
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true },
+            html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true, useCORS: true },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
           };
 
@@ -1250,8 +1447,22 @@
             // Restore display state of the "Hide Header" checkbox and its label
             if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
             if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
-            window.showToast?.(`${sanitizedBase}.pdf has been downloaded`, 'success');
-          }).finally(() => window.hideLoader?.());
+            window.showToast?.(`${sanitizedBase}.pdf has been downloaded successfully!`, 'success');
+          }).catch((error) => {
+            console.error('PDF download error:', error);
+            window.showToast?.('Error downloading PDF. Please try again or check console for details.', 'error');
+            editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
+            // Restore display state
+            if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
+            if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
+          }).finally(() => {
+            window.hideLoader?.();
+          });
+          } catch (error) {
+            console.error('Download preparation error:', error);
+            window.showToast?.('An error occurred while preparing the PDF. Please try again.', 'error');
+            window.hideLoader?.();
+          }
         });
       }
 
@@ -1283,11 +1494,12 @@
 
 
       // Add item button event listener
-      addItemBtn.addEventListener('click', () => {
-        const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
-        const newRow = document.createElement('tr');
-        newRow.className = 'text-center item-row';
-        newRow.innerHTML = `
+      if (addItemBtn && invoiceItems) {
+        addItemBtn.addEventListener('click', () => {
+          const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
+          const newRow = document.createElement('tr');
+          newRow.className = 'text-center item-row';
+          newRow.innerHTML = `
           <td>${rowCount}</td>
           <td class="text-left" contenteditable="true" spellcheck="false"></td>
           <td contenteditable="true" spellcheck="false"></td>
@@ -1296,21 +1508,25 @@
           <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
           <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
         `;
-        invoiceItems.appendChild(newRow);
-        addInputListeners();
-      });
+          invoiceItems.appendChild(newRow);
+          addInputListeners();
+          calculateTotal?.();
+        });
+      }
 
       // Remove item button event listener
-      removeItemBtn.addEventListener('click', () => {
-        const rows = invoiceItems.querySelectorAll('.item-row');
-        if (rows.length > 1) {
-          rows[rows.length - 1].remove();
-          updateRowNumbers();
-          calculateTotal();
-        } else {
-          alert('Cannot remove the last row. At least one item row must remain.');
-        }
-      });
+      if (removeItemBtn && invoiceItems) {
+        removeItemBtn.addEventListener('click', () => {
+          const rows = invoiceItems.querySelectorAll('.item-row');
+          if (rows.length > 1) {
+            rows[rows.length - 1].remove();
+            updateRowNumbers?.();
+            calculateTotal?.();
+          } else {
+            alert('Cannot remove the last row. At least one item row must remain.');
+          }
+        });
+      }
     }
 
     // Valid unit codes
@@ -1793,19 +2009,54 @@
         total += amount;
       });
 
-      const cgst = total * 0.09; // 9%
-      const sgst = total * 0.09; // 9%
-      const gstTotal = cgst + sgst;
+      const includeGSTCheckbox = document.getElementById('includeGST');
+      const includeGST = includeGSTCheckbox ? includeGSTCheckbox.checked : true;
 
-      document.querySelector('.total-amount').textContent = total.toFixed(2);
-      document.querySelector('.cgst').textContent = cgst.toFixed(2);
-      document.querySelector('.sgst').textContent = sgst.toFixed(2);
-      document.querySelector('.gst-total').textContent = gstTotal.toFixed(2);
-      document.getElementById('gst-total-amount').textContent = gstTotal.toFixed(2);
+      const totalAmountEl = document.querySelector('.total-amount');
+      if (totalAmountEl) {
+        totalAmountEl.textContent = total.toFixed(2);
+      }
 
-      const totalIncludingGST = total + gstTotal;
-      document.querySelector('.total-in-words').textContent = totalIncludingGST.toFixed(2);
-      document.querySelector('.amount-in-words').textContent = convertNumberToWords(totalIncludingGST);
+      if (includeGST) {
+        const cgst = total * 0.09; // 9%
+        const sgst = total * 0.09; // 9%
+        const gstTotal = cgst + sgst;
+
+        const cgstEl = document.querySelector('.cgst');
+        const sgstEl = document.querySelector('.sgst');
+        const gstTotalEl = document.querySelector('.gst-total');
+        const gstTotalAmountEl = document.getElementById('gst-total-amount');
+        
+        if (cgstEl) cgstEl.textContent = cgst.toFixed(2);
+        if (sgstEl) sgstEl.textContent = sgst.toFixed(2);
+        if (gstTotalEl) gstTotalEl.textContent = gstTotal.toFixed(2);
+        if (gstTotalAmountEl) gstTotalAmountEl.textContent = gstTotal.toFixed(2);
+
+        const totalIncludingGST = total + gstTotal;
+        const totalInWordsEl = document.querySelector('.total-in-words');
+        const amountInWordsEl = document.querySelector('.amount-in-words');
+        
+        if (totalInWordsEl) totalInWordsEl.textContent = totalIncludingGST.toFixed(2);
+        if (amountInWordsEl) amountInWordsEl.textContent = convertNumberToWords(totalIncludingGST);
+      } else {
+        // Without GST - set all GST values to 0
+        const cgstEl = document.querySelector('.cgst');
+        const sgstEl = document.querySelector('.sgst');
+        const gstTotalEl = document.querySelector('.gst-total');
+        const gstTotalAmountEl = document.getElementById('gst-total-amount');
+        
+        if (cgstEl) cgstEl.textContent = '0.00';
+        if (sgstEl) sgstEl.textContent = '0.00';
+        if (gstTotalEl) gstTotalEl.textContent = '0.00';
+        if (gstTotalAmountEl) gstTotalAmountEl.textContent = '0.00';
+
+        // Total without GST
+        const totalInWordsEl = document.querySelector('.total-in-words');
+        const amountInWordsEl = document.querySelector('.amount-in-words');
+        
+        if (totalInWordsEl) totalInWordsEl.textContent = total.toFixed(2);
+        if (amountInWordsEl) amountInWordsEl.textContent = convertNumberToWords(total);
+      }
     }
 
     // Function to update row numbers after removal
