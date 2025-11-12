@@ -100,7 +100,7 @@
       const saveBtn = document.getElementById('saveBtn');
       const downloadBtn = document.getElementById('downloadBtn');
       const saveDisabled = !hasUserStarted; // user must start editing to save
-      const downloadDisabled = false; // Allow download even without saving
+      const downloadDisabled = !currentDocId; // require saved bill to download
 
       if (saveBtn) {
         saveBtn.disabled = saveDisabled;
@@ -1334,58 +1334,25 @@
       if (downloadBtn) {
         downloadBtn.addEventListener('click', async () => {
           if (downloadBtn.disabled) return; // respect disabled state
-          
-          try {
-            // Check if html2pdf is loaded
-            if (typeof html2pdf === 'undefined') {
-              window.showToast?.('PDF library is loading. Please wait a moment and try again.', 'warning');
-              setTimeout(() => {
-                if (typeof html2pdf !== 'undefined') {
-                  window.showToast?.('PDF library loaded. Please try downloading again.', 'info');
-                }
-              }, 1000);
-              return;
+          const editableElements = bill.querySelectorAll('[contenteditable]');
+          let isValid = true;
+
+          editableElements.forEach(el => {
+            if (el.innerText.trim() === '') {
+              isValid = false;
+              el.classList.add('border-red-500');
+            } else {
+              el.classList.remove('border-red-500');
             }
+          });
 
-            // Optional: Check only essential fields (not all fields)
-            // This allows download even if some optional fields are empty
-            const essentialFields = [
-              document.getElementById('billNoInput'),
-              document.getElementById('dateInput'),
-              document.getElementById('billed-to-line1')
-            ];
-            
-            let hasEssentialData = false;
-            essentialFields.forEach(field => {
-              if (field && field.textContent.trim()) {
-                hasEssentialData = true;
-              }
-            });
+          if (!isValid) {
+            alert('Please fill out all required fields before downloading the PDF.');
+            return;
+          }
 
-            // Check if there's at least one item with data
-            const invoiceItems = document.getElementById('invoiceItems');
-            if (invoiceItems) {
-              const rows = invoiceItems.querySelectorAll('.item-row');
-              rows.forEach(row => {
-                const desc = row.children[1]?.textContent?.trim();
-                const qty = parseFloat(row.children[3]?.textContent) || 0;
-                const rate = parseFloat(row.children[5]?.textContent) || 0;
-                if (desc || qty > 0 || rate > 0) {
-                  hasEssentialData = true;
-                }
-              });
-            }
-
-            if (!hasEssentialData) {
-              const proceed = confirm('Bill appears to be empty. Do you still want to download the PDF?');
-              if (!proceed) return;
-            }
-
-            // Get all editable elements
-            const editableElements = bill.querySelectorAll('[contenteditable]');
-            
-            // Temporarily disable contenteditable
-            editableElements.forEach(el => el.setAttribute('contenteditable', 'false'));
+          // Temporarily disable contenteditable
+          editableElements.forEach(el => el.setAttribute('contenteditable', 'false'));
 
           // Temporarily hide the "Hide Header" checkbox and its label for PDF export
           const hideHeaderCheckbox = document.getElementById('hideHeader');
@@ -1420,12 +1387,7 @@
           const cloneLabel = clone.querySelector('label[for="hideHeader"]');
           if (cloneCheckbox) cloneCheckbox.remove();
           if (cloneLabel) cloneLabel.remove();
-          
-          // Remove GST toggle from clone (it's outside bill, but check anyway)
-          const cloneGSTToggle = clone.querySelector('#includeGST');
-          const cloneGSTLabel = clone.querySelector('#gstToggleLabel');
-          if (cloneGSTToggle) cloneGSTToggle.remove();
-          if (cloneGSTLabel) cloneGSTLabel.remove();
+
 
           // Compute filename from saved custom name if available
           const rawName = (bill.dataset.customName || '').trim();
@@ -1434,10 +1396,10 @@
             : 'tax_invoice';
 
           const opt = {
-            margin: [0, 0, 5, 0], // Top: 0mm, Right: 0mm, Bottom: 5mm, Left: 0mm
+            margin: [0, 0, 5, 0], // Top: 10mm, Right: 15mm, Bottom: 20mm, Left: 15mm
             filename: sanitizedBase + '.pdf',
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true, useCORS: true },
+            html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
           };
 
@@ -1447,22 +1409,8 @@
             // Restore display state of the "Hide Header" checkbox and its label
             if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
             if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
-            window.showToast?.(`${sanitizedBase}.pdf has been downloaded successfully!`, 'success');
-          }).catch((error) => {
-            console.error('PDF download error:', error);
-            window.showToast?.('Error downloading PDF. Please try again or check console for details.', 'error');
-            editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
-            // Restore display state
-            if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
-            if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
-          }).finally(() => {
-            window.hideLoader?.();
-          });
-          } catch (error) {
-            console.error('Download preparation error:', error);
-            window.showToast?.('An error occurred while preparing the PDF. Please try again.', 'error');
-            window.hideLoader?.();
-          }
+            window.showToast?.(`${sanitizedBase}.pdf has been downloaded`, 'success');
+          }).finally(() => window.hideLoader?.());
         });
       }
 
