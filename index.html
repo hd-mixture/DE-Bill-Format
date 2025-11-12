@@ -17,6 +17,23 @@
     let currentDocId = null; // null => new/unsaved bill; string => editing existing bill
     let hasUserStarted = false; // Tracks if user started editing current bill
 
+    // Expose variables to window for non-module scripts using Object.defineProperty
+    Object.defineProperty(window, 'isBillSaved', {
+      get: () => isBillSaved,
+      set: (val) => { isBillSaved = val; },
+      configurable: true
+    });
+    Object.defineProperty(window, 'currentDocId', {
+      get: () => currentDocId,
+      set: (val) => { currentDocId = val; },
+      configurable: true
+    });
+    Object.defineProperty(window, 'hasUserStarted', {
+      get: () => hasUserStarted,
+      set: (val) => { hasUserStarted = val; },
+      configurable: true
+    });
+
     document.addEventListener('DOMContentLoaded', () => {
       const billEl = document.getElementById('bill');
       defaultBillHTML = billEl.innerHTML; // store initial layout
@@ -96,11 +113,14 @@
       saveBtn.textContent = currentDocId ? 'Save Changes' : 'Save Bill';
     }
 
+    // Expose to window for non-module scripts
+    window.updateSaveButtonLabel = updateSaveButtonLabel;
+
     function updateActionButtons() {
       const saveBtn = document.getElementById('saveBtn');
       const downloadBtn = document.getElementById('downloadBtn');
       const saveDisabled = !hasUserStarted; // user must start editing to save
-      const downloadDisabled = !currentDocId; // require saved bill to download
+      const downloadDisabled = !currentDocId; // Download only enabled after saving
 
       if (saveBtn) {
         saveBtn.disabled = saveDisabled;
@@ -114,6 +134,9 @@
         else downloadBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       }
     }
+
+    // Expose to window for non-module scripts
+    window.updateActionButtons = updateActionButtons;
 
     function markActiveBill(docId) {
       const items = document.querySelectorAll('.saved-bill-item');
@@ -142,32 +165,34 @@
             timestamp: serverTimestamp()
           });
           isBillSaved = true;
+          hasUserStarted = false; // Reset to disable Save button until next change
           showToast('Changes saved!', 'success');
         } else {
           // Creating new bill: prompt for a name
-      const customName = prompt("Enter a name for this bill:");
-      if (!customName) {
-        showToast('Save cancelled: No name provided.', 'warning');
-        return;
-      }
+          const customName = prompt("Enter a name for this bill:");
+          if (!customName) {
+            showToast('Save cancelled: No name provided.', 'warning');
+            return;
+          }
 
           const now = serverTimestamp();
-      const billData = {
+          const billData = {
             content: billHTML,
             hideHeader: hideHeaderState,
             includeGST: includeGSTState,
             createdAt: now,
             updatedAt: now,
             timestamp: now,
-        customName: customName.trim()
-      };
+            customName: customName.trim()
+          };
 
           const docRef = await addDoc(collection(db, 'bills'), billData);
           currentDocId = docRef.id;
           const billElRef = document.getElementById('bill');
           if (billElRef) billElRef.dataset.customName = customName.trim();
           isBillSaved = true;
-        showToast('Bill saved successfully!', 'success');
+          hasUserStarted = false; // Reset to disable Save button until next change
+          showToast('Bill saved successfully!', 'success');
         }
         updateSaveButtonLabel();
         loadSavedBills();
@@ -280,7 +305,7 @@
           const invoiceItems = document.getElementById('invoiceItems');
           const addItemBtn = document.getElementById('addItem');
           const removeItemBtn = document.getElementById('removeItem');
-          
+
           if (addItemBtn && invoiceItems) {
             addItemBtn.addEventListener('click', () => {
               const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
@@ -374,8 +399,9 @@
     };
 
     window.loadBill = function (docId, billData) {
-      const shouldConfirm = hasUserStarted && !isBillSaved;
-      if (!shouldConfirm || confirm('Load this bill? Current changes will be lost.')) {
+      // Only show warning if user has actually made changes to the current bill
+      const hasActualChanges = !isBillSaved && hasUserStarted;
+      if (!hasActualChanges || confirm('Load this bill? Current changes will be lost.')) {
         const billEl = document.getElementById('bill');
         billEl.innerHTML = billData.content;
         billEl.dataset.customName = billData.customName || '';
@@ -402,12 +428,15 @@
 
         // Apply saved header visibility state if present; default to visible
         const savedHide = !!billData.hideHeader;
+        const footerContainer = document.getElementById('footer-container');
         if (hideHeaderCheckbox) hideHeaderCheckbox.checked = savedHide;
         if (savedHide) {
           if (headerContainer) headerContainer.style.display = 'none';
+          if (footerContainer) footerContainer.style.display = 'none';
           billEl.classList.add('header-hidden');
         } else {
           if (headerContainer) headerContainer.style.display = 'block';
+          if (footerContainer) footerContainer.style.display = 'block';
           billEl.classList.remove('header-hidden');
         }
 
@@ -415,9 +444,11 @@
           hideHeaderCheckbox.addEventListener('change', () => {
             if (hideHeaderCheckbox.checked) {
               headerContainer.style.display = 'none';
+              if (footerContainer) footerContainer.style.display = 'none';
               billEl.classList.add('header-hidden');
             } else {
               headerContainer.style.display = 'block';
+              if (footerContainer) footerContainer.style.display = 'block';
               billEl.classList.remove('header-hidden');
             }
           });
@@ -428,16 +459,16 @@
         const gstToggleLabel = document.getElementById('gstToggleLabel');
         const gstRow = document.getElementById('gst-row');
         const savedIncludeGST = billData.includeGST !== undefined ? billData.includeGST : true;
-        
+
         if (includeGSTCheckbox) {
           // Remove old event listeners by cloning the checkbox
           const newGSTCheckbox = includeGSTCheckbox.cloneNode(true);
           includeGSTCheckbox.parentNode.replaceChild(newGSTCheckbox, includeGSTCheckbox);
-          
+
           // Get fresh reference
           const freshGSTCheckbox = document.getElementById('includeGST');
           freshGSTCheckbox.checked = savedIncludeGST;
-          
+
           // Update display immediately
           if (gstToggleLabel) {
             gstToggleLabel.textContent = savedIncludeGST ? 'Include GST' : 'Without GST';
@@ -445,7 +476,7 @@
           if (gstRow) {
             gstRow.style.display = savedIncludeGST ? '' : 'none';
           }
-          
+
           // Re-attach event listener for dynamic GST toggle
           const updateGSTDisplay = () => {
             const includeGST = freshGSTCheckbox.checked;
@@ -461,10 +492,10 @@
             hasUserStarted = true;
             updateActionButtons?.();
           };
-          
+
           freshGSTCheckbox.addEventListener('change', updateGSTDisplay);
         }
-        
+
         // Recalculate total after loading GST state
         calculateTotal?.();
 
@@ -596,7 +627,7 @@
       if (closeBtn) closeBtn.addEventListener('click', () => dismiss());
 
       // render icons
-      try { lucide.createIcons(); } catch {}
+      try { lucide.createIcons(); } catch { }
 
       const hideTimer = setTimeout(() => dismiss(), 3000);
 
@@ -604,7 +635,7 @@
         clearTimeout(hideTimer);
         wrapper.style.opacity = '0';
         wrapper.style.transform = 'translateY(8px)';
-      setTimeout(() => {
+        setTimeout(() => {
           wrapper.remove();
         }, 250);
       }
@@ -618,7 +649,7 @@
     // });
   </script>
   <!-- Toast Container -->
-  
+
 
   <!-- Saved Bills Container Placeholder -->
   <style>
@@ -656,7 +687,8 @@
     /* Add top space when header is hidden */
     #bill.header-hidden {
       padding-top: 25mm;
-      /* Adjust this value as needed */
+      padding-bottom: 25mm;
+      /* Equal spacing top and bottom when header/footer hidden */
     }
 
     #bill *[contenteditable] {
@@ -766,8 +798,10 @@
 
     /* Active saved bill highlight */
     .saved-bill-item.active {
-      background: #eff6ff; /* blue-50 */
-      border-left: 4px solid #60a5fa; /* blue-400 */
+      background: #eff6ff;
+      /* blue-50 */
+      border-left: 4px solid #60a5fa;
+      /* blue-400 */
     }
 
     .main-content {
@@ -792,19 +826,26 @@
         Invalid PIN
       </div>
       <div class="mb-6 flex justify-center gap-3">
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off" class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
       </div>
-      <button id="loginButton" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+      <button id="loginButton"
+        class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
         Login
       </button>
     </div>
   </div>
 
   <style>
-    #mainContent { display: none; }
+    #mainContent {
+      display: none;
+    }
   </style>
   <div id="settingsModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[3000] hidden">
     <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-md">
@@ -821,19 +862,23 @@
       <div class="space-y-4">
         <div>
           <label for="currentPin" class="block text-sm font-medium text-gray-700">Current PIN</label>
-          <input type="password" id="currentPin" inputmode="numeric" maxlength="4" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
+          <input type="password" id="currentPin" inputmode="numeric" maxlength="4"
+            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
         </div>
         <div>
           <label for="newPin" class="block text-sm font-medium text-gray-700">New PIN</label>
-          <input type="password" id="newPin" inputmode="numeric" maxlength="4" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" autocomplete="off">
+          <input type="password" id="newPin" inputmode="numeric" maxlength="4"
+            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md" autocomplete="off">
         </div>
         <div>
           <label for="confirmNewPin" class="block text-sm font-medium text-gray-700">Confirm New PIN</label>
-          <input type="password" id="confirmNewPin" inputmode="numeric" maxlength="4" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
+          <input type="password" id="confirmNewPin" inputmode="numeric" maxlength="4"
+            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md">
         </div>
       </div>
 
-      <button id="saveCredentialsBtn" class="mt-6 w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
+      <button id="saveCredentialsBtn"
+        class="mt-6 w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
         Save New PIN
       </button>
     </div>
@@ -853,11 +898,13 @@
     </div>
     <div class="mt-8 pt-4 border-t border-gray-200">
       <h3 class="text-lg font-bold mb-4">Account</h3>
-      <button id="changeCredentialsBtn" class="w-full text-left py-2 px-2 rounded-md hover:bg-gray-100 transition flex items-center gap-2">
+      <button id="changeCredentialsBtn"
+        class="w-full text-left py-2 px-2 rounded-md hover:bg-gray-100 transition flex items-center gap-2">
         <i data-lucide="key" class="w-4 h-4"></i>
         <span>Change Credentials</span>
       </button>
-      <button id="logoutBtn" class="w-full text-left py-2 px-2 rounded-md hover:bg-red-50 transition flex items-center gap-2 text-red-600 hover:text-red-700">
+      <button id="logoutBtn"
+        class="w-full text-left py-2 px-2 rounded-md hover:bg-red-50 transition flex items-center gap-2 text-red-600 hover:text-red-700">
         <i data-lucide="log-out" class="w-4 h-4"></i>
         <span>Logout</span>
       </button>
@@ -895,13 +942,15 @@
       <div class="flex items-center">
         <label class="relative inline-flex items-center cursor-pointer">
           <input type="checkbox" id="includeGST" class="sr-only peer" checked />
-          <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+          <div
+            class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+          </div>
           <span class="ml-3 text-sm font-medium text-gray-700" id="gstToggleLabel">Include GST</span>
         </label>
       </div>
       <div class="flex items-center">
         <input type="checkbox" id="hideHeader" class="mr-1" checked />
-        <label for="hideHeader" class="text-sm text-gray-700">Hide Header</label>
+        <label for="hideHeader" class="text-sm text-gray-700">Hide Letterhead</label>
       </div>
     </div>
 
@@ -917,8 +966,9 @@
         <thead>
           <br /><br />
           <tr>
-            <th colspan="7" class="bold text-center py-1 invoice-title" contenteditable="true" spellcheck="false">Tax <span
-                class="font-extrabold">INVOICE</span></th>
+            <th colspan="7" class="bold text-center py-1 invoice-title" contenteditable="true" spellcheck="false">Tax
+              <span class="font-extrabold">INVOICE</span>
+            </th>
           </tr>
         </thead>
         <tbody id="invoiceItems">
@@ -940,7 +990,8 @@
           <tr>
             <td colspan="7" style="height: 80px;" class="align-top p-1" contenteditable="false" spellcheck="false">
               BILLED TO,<br />
-              <div id="billed-to-line1" class="font-bold" contenteditable="true" spellcheck="false" style="min-height: 20px;"></div>
+              <div id="billed-to-line1" class="font-bold" contenteditable="true" spellcheck="false"
+                style="min-height: 20px;"></div>
               <div id="billed-to-line2" contenteditable="true" spellcheck="false" style="min-height: 20px;"></div>
               <div id="billed-to-line3" contenteditable="true" spellcheck="false" style="min-height: 20px;"></div>
               <div class="mt-1">
@@ -1027,6 +1078,12 @@
         <button id="addItem" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Add
           Item</button>
       </div>
+
+      <!-- Footer Image - At the very end of the page -->
+      <div class="mt-12" id="footer-container">
+        <img src="assets/footer.png" alt="Company Footer Image" class="w-full object-contain"
+          id="company-footer-image" />
+      </div>
     </div>
   </div>
 
@@ -1085,7 +1142,7 @@
       if (digits === (storedPin || '1316')) {
         sessionStorage.setItem('isLoggedIn', 'true');
         showMainContent();
-        try { window.showToast?.('Login successful', 'success'); } catch {}
+        try { window.showToast?.('Login successful', 'success'); } catch { }
       } else {
         if (errorEl) {
           errorEl.classList.remove('hidden');
@@ -1121,7 +1178,7 @@
 
       setCredentials(creds.username, creds.password, newPin);
       // Clear fields and close modal
-      ['currentPin','newPin','confirmNewPin'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      ['currentPin', 'newPin', 'confirmNewPin'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
       document.getElementById('settingsModal')?.classList.add('hidden');
       showOk('PIN updated successfully');
       window.showToast?.('PIN updated successfully', 'success');
@@ -1218,7 +1275,7 @@
       const settingsBtn = document.getElementById('changeCredentialsBtn');
       if (settingsBtn) settingsBtn.addEventListener('click', () => {
         document.getElementById('settingsModal')?.classList.remove('hidden');
-        try { lucide.createIcons(); } catch {}
+        try { lucide.createIcons(); } catch { }
       });
       const closeSettings = document.getElementById('closeSettingsModal');
       if (closeSettings) closeSettings.addEventListener('click', () => {
@@ -1243,7 +1300,7 @@
     document.getElementById('closeNav').addEventListener('click', toggleSideNav);
     document.getElementById('saveBtn').addEventListener('click', () => window.saveBill());
     // Ensure initial label matches context (new unsaved bill)
-    updateSaveButtonLabel?.();
+    window.updateSaveButtonLabel?.();
 
     // Verify html2pdf is loaded
     function checkHtml2Pdf() {
@@ -1288,43 +1345,63 @@
             bill.classList.remove('header-hidden'); // Remove class from bill
           }
         });
+
+        // Also hide/show footer when "Hide Letterhead" is toggled
+        const footerContainer = document.getElementById('footer-container');
+        if (footerContainer) {
+          // Apply initial state (hide footer when header is hidden)
+          if (hideHeaderCheckbox.checked) {
+            footerContainer.style.display = 'none';
+          } else {
+            footerContainer.style.display = 'block';
+          }
+
+          // Update footer visibility when checkbox changes
+          const originalChangeListener = hideHeaderCheckbox.addEventListener('change', () => {
+            if (hideHeaderCheckbox.checked) {
+              footerContainer.style.display = 'none';
+            } else {
+              footerContainer.style.display = 'block';
+            }
+          });
+        }
       }
 
       // Initialize GST toggle - Make it fully dynamic
       const includeGSTCheckbox = document.getElementById('includeGST');
       const gstToggleLabel = document.getElementById('gstToggleLabel');
       const gstRow = document.getElementById('gst-row');
-      
+
       if (includeGSTCheckbox) {
         // Function to update GST display and calculations dynamically
         const updateGSTDisplay = () => {
           const includeGST = includeGSTCheckbox.checked;
-          
+
           // Update label
           if (gstToggleLabel) {
             gstToggleLabel.textContent = includeGST ? 'Include GST' : 'Without GST';
           }
-          
+
           // Show/hide GST row dynamically
           if (gstRow) {
             gstRow.style.display = includeGST ? '' : 'none';
           }
-          
+
           // Immediately recalculate totals with new GST state
           // This ensures it works even after all fields are filled
           setTimeout(() => {
             calculateTotal?.();
           }, 0);
-          
+
           // Mark bill as unsaved when GST toggle changes
           isBillSaved = false;
           hasUserStarted = true;
-          updateActionButtons?.();
+          window.updateActionButtons?.();
         };
-        
+
         // Apply initial state
         updateGSTDisplay();
-        
+
         // Add event listener for dynamic GST toggle
         // This will work at any time, even after all fields are filled
         includeGSTCheckbox.addEventListener('change', updateGSTDisplay);
@@ -1333,23 +1410,33 @@
       // Add download button event listener
       if (downloadBtn) {
         downloadBtn.addEventListener('click', async () => {
-          if (downloadBtn.disabled) return; // respect disabled state
-          const editableElements = bill.querySelectorAll('[contenteditable]');
-          let isValid = true;
+          // Check essential fields only - make validation less strict
+          const billNo = document.getElementById('billNoInput')?.textContent?.trim();
+          const date = document.getElementById('dateInput')?.textContent?.trim();
+          const billedTo = document.getElementById('billed-to-line1')?.textContent?.trim();
 
-          editableElements.forEach(el => {
-            if (el.innerText.trim() === '') {
-              isValid = false;
-              el.classList.add('border-red-500');
-            } else {
-              el.classList.remove('border-red-500');
-            }
-          });
-
-          if (!isValid) {
-            alert('Please fill out all required fields before downloading the PDF.');
-            return;
+          // Check if at least one item has data
+          const invoiceItems = document.getElementById('invoiceItems');
+          let hasItemData = false;
+          if (invoiceItems) {
+            const rows = invoiceItems.querySelectorAll('.item-row');
+            rows.forEach(row => {
+              const desc = row.children[1]?.textContent?.trim();
+              const qty = parseFloat(row.children[3]?.textContent) || 0;
+              const rate = parseFloat(row.children[5]?.textContent) || 0;
+              if (desc || qty > 0 || rate > 0) {
+                hasItemData = true;
+              }
+            });
           }
+
+          // Only warn if completely empty, but allow download
+          if (!billNo && !date && !billedTo && !hasItemData) {
+            const proceed = confirm('Bill appears to be empty. Do you still want to download the PDF?');
+            if (!proceed) return;
+          }
+
+          const editableElements = bill.querySelectorAll('[contenteditable="true"]');
 
           // Temporarily disable contenteditable
           editableElements.forEach(el => el.setAttribute('contenteditable', 'false'));
@@ -1388,29 +1475,63 @@
           if (cloneCheckbox) cloneCheckbox.remove();
           if (cloneLabel) cloneLabel.remove();
 
+          // ✅ Position footer at the end of page with proper spacing
+          // Simply add padding-top to footer to push it down - no wrapper needed
+          const cloneFooter = clone.querySelector('#footer-container');
+          if (cloneFooter) {
+            cloneFooter.style.paddingTop = '30mm'; // Reduced spacing to fit on 1 page
+            cloneFooter.style.borderTop = 'none';
+            cloneFooter.style.pageBreakBefore = 'avoid';
+            cloneFooter.style.pageBreakInside = 'avoid';
+            cloneFooter.style.pageBreakAfter = 'avoid';
+          }
 
-          // Compute filename from saved custom name if available
+          // Force all elements to stay on same page
+          clone.style.pageBreakInside = 'avoid';
+          clone.querySelectorAll('div, p, table, img').forEach(el => {
+            el.style.pageBreakInside = 'avoid';
+          });          // Compute filename from saved custom name if available
           const rawName = (bill.dataset.customName || '').trim();
           const sanitizedBase = rawName
             ? rawName.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim()
             : 'tax_invoice';
 
           const opt = {
-            margin: [0, 0, 5, 0], // Top: 10mm, Right: 15mm, Bottom: 20mm, Left: 15mm
+            margin: [0, 5, 5, 5], // Top: 0mm, Right: 5mm, Bottom: 5mm, Left: 5mm
             filename: sanitizedBase + '.pdf',
             image: { type: 'jpeg', quality: 0.98 },
             html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true },
             jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
           };
 
+          // Check if html2pdf is available
+          if (typeof html2pdf === 'undefined') {
+            alert('PDF library is not loaded. Please refresh the page and try again.');
+            editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
+            if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
+            if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
+            return;
+          }
+
+          console.log('Starting PDF download...');
           window.showLoader?.();
+
           html2pdf().set(opt).from(clone).save().then(() => {
+            console.log('PDF downloaded successfully');
             editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
             // Restore display state of the "Hide Header" checkbox and its label
             if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
             if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
             window.showToast?.(`${sanitizedBase}.pdf has been downloaded`, 'success');
-          }).finally(() => window.hideLoader?.());
+          }).catch((error) => {
+            console.error('PDF download error:', error);
+            window.showToast?.('Error downloading PDF: ' + (error.message || 'Unknown error'), 'error');
+            editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
+            if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
+            if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
+          }).finally(() => {
+            window.hideLoader?.();
+          });
         });
       }
 
@@ -1512,18 +1633,18 @@
       const selection = window.getSelection();
       const range = selection.getRangeAt(0);
       const cursorOffset = range.startOffset;
-      
+
       // Remove numbers
       const cleanInput = input.replace(/[0-9]/g, '');
       if (cleanInput !== input) {
         event.target.textContent = cleanInput;
       }
-      
+
       // Auto capitalize
       if (cleanInput !== cleanInput.toUpperCase()) {
         event.target.textContent = cleanInput.toUpperCase();
       }
-      
+
       // Restore cursor position
       try {
         const newRange = document.createRange();
@@ -1544,12 +1665,12 @@
       const selection = window.getSelection();
       const range = selection.getRangeAt(0);
       const cursorOffset = range.startOffset;
-      
+
       // Auto capitalize
       if (input !== input.toUpperCase()) {
         event.target.textContent = input.toUpperCase();
       }
-      
+
       // Restore cursor position
       try {
         const newRange = document.createRange();
@@ -1570,13 +1691,13 @@
       const selection = window.getSelection();
       const range = selection.getRangeAt(0);
       const cursorOffset = range.startOffset;
-      
+
       // Only allow numbers and hyphens
       let cleanInput = input.replace(/[^0-9-]/g, '');
       if (cleanInput !== input) {
         event.target.textContent = cleanInput;
       }
-      
+
       // Auto-insert hyphens
       if (cleanInput.length >= 2 && cleanInput.charAt(2) !== '-') {
         cleanInput = cleanInput.substring(0, 2) + '-' + cleanInput.substring(2);
@@ -1584,23 +1705,23 @@
       if (cleanInput.length >= 5 && cleanInput.charAt(5) !== '-') {
         cleanInput = cleanInput.substring(0, 5) + '-' + cleanInput.substring(5);
       }
-      
+
       // Limit to 10 characters (DD-MM-YYYY)
       if (cleanInput.length > 10) {
         cleanInput = cleanInput.substring(0, 10);
       }
-      
+
       // Update the input if changed
       if (cleanInput !== event.target.textContent) {
         event.target.textContent = cleanInput;
       }
-      
+
       // Restore cursor position with adjustment for auto-inserted hyphens
       try {
         const newRange = document.createRange();
         const textNode = event.target.firstChild || event.target;
         let newOffset = cursorOffset;
-        
+
         // Adjust cursor position if hyphens were auto-inserted
         if (cleanInput.length >= 3 && cleanInput.charAt(2) === '-' && cursorOffset >= 2) {
           newOffset = cursorOffset + 1; // Move cursor after the hyphen
@@ -1608,7 +1729,7 @@
         if (cleanInput.length >= 6 && cleanInput.charAt(5) === '-' && cursorOffset >= 5) {
           newOffset = cursorOffset + 1; // Move cursor after the second hyphen
         }
-        
+
         newOffset = Math.min(newOffset, textNode.textContent.length);
         newRange.setStart(textNode, newOffset);
         newRange.setEnd(textNode, newOffset);
@@ -1641,13 +1762,13 @@
       const selection = window.getSelection();
       const range = selection.getRangeAt(0);
       const cursorOffset = range.startOffset;
-      
+
       // Only allow numbers
       const cleanInput = input.replace(/[^0-9]/g, '');
       if (cleanInput !== input) {
         event.target.textContent = cleanInput;
       }
-      
+
       // Restore cursor position
       try {
         const newRange = document.createRange();
@@ -1815,21 +1936,21 @@
       const selection = window.getSelection();
       const range = selection.getRangeAt(0);
       const cursorOffset = range.startOffset;
-      
+
       // Limit to 15 characters
       if (value.length > 15) {
         value = value.substring(0, 15);
         event.target.textContent = value;
       }
-      
+
       // Auto capitalize
       if (value !== value.toUpperCase()) {
         event.target.textContent = value.toUpperCase();
       }
-      
+
       // Make text bold
       event.target.style.fontWeight = 'bold';
-      
+
       // Restore cursor position
       try {
         const newRange = document.createRange();
@@ -1974,7 +2095,7 @@
         const sgstEl = document.querySelector('.sgst');
         const gstTotalEl = document.querySelector('.gst-total');
         const gstTotalAmountEl = document.getElementById('gst-total-amount');
-        
+
         if (cgstEl) cgstEl.textContent = cgst.toFixed(2);
         if (sgstEl) sgstEl.textContent = sgst.toFixed(2);
         if (gstTotalEl) gstTotalEl.textContent = gstTotal.toFixed(2);
@@ -1983,7 +2104,7 @@
         const totalIncludingGST = total + gstTotal;
         const totalInWordsEl = document.querySelector('.total-in-words');
         const amountInWordsEl = document.querySelector('.amount-in-words');
-        
+
         if (totalInWordsEl) totalInWordsEl.textContent = totalIncludingGST.toFixed(2);
         if (amountInWordsEl) amountInWordsEl.textContent = convertNumberToWords(totalIncludingGST);
       } else {
@@ -1992,7 +2113,7 @@
         const sgstEl = document.querySelector('.sgst');
         const gstTotalEl = document.querySelector('.gst-total');
         const gstTotalAmountEl = document.getElementById('gst-total-amount');
-        
+
         if (cgstEl) cgstEl.textContent = '0.00';
         if (sgstEl) sgstEl.textContent = '0.00';
         if (gstTotalEl) gstTotalEl.textContent = '0.00';
@@ -2001,7 +2122,7 @@
         // Total without GST
         const totalInWordsEl = document.querySelector('.total-in-words');
         const amountInWordsEl = document.querySelector('.amount-in-words');
-        
+
         if (totalInWordsEl) totalInWordsEl.textContent = total.toFixed(2);
         if (amountInWordsEl) amountInWordsEl.textContent = convertNumberToWords(total);
       }
@@ -2019,12 +2140,14 @@
     //   checkHtml2Pdf();
     // });
   </script>
-  
+
   <!-- Toast Container -->
   <div id="toastRoot" class="fixed bottom-5 right-5 z-50 flex flex-col gap-3"></div>
   <!-- Global Loader Overlay -->
-  <div id="loaderOverlay" class="hidden fixed inset-0 bg-white/70 backdrop-blur-sm flex items-center justify-center z-40">
-    <dotlottie-wc src="https://lottie.host/0574a663-32d8-461f-82ef-c7fdcd5a15e9/XJ2s2RFpYR.lottie" style="width: 220px;height: 220px" speed="1" autoplay loop></dotlottie-wc>
+  <div id="loaderOverlay"
+    class="hidden fixed inset-0 bg-white/70 backdrop-blur-sm flex items-center justify-center z-40">
+    <dotlottie-wc src="https://lottie.host/0574a663-32d8-461f-82ef-c7fdcd5a15e9/XJ2s2RFpYR.lottie"
+      style="width: 220px;height: 220px" speed="1" autoplay loop></dotlottie-wc>
   </div>
 </body>
 
