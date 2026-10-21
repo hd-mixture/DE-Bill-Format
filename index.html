@@ -34,24 +34,47 @@
       configurable: true
     });
 
+    // Bill Snapshot Helper to track true content changes
+    window.takeBillSnapshot = function () {
+      const billEl = document.getElementById('bill');
+      if (billEl) {
+        window.currentBillSnapshot = billEl.innerHTML;
+      }
+    };
+
+    window.hasBillContentChanged = function () {
+      const billEl = document.getElementById('bill');
+      if (!billEl || !window.currentBillSnapshot) return false;
+      return billEl.innerHTML !== window.currentBillSnapshot;
+    };
+
     document.addEventListener('DOMContentLoaded', () => {
       const billEl = document.getElementById('bill');
       defaultBillHTML = billEl.innerHTML; // store initial layout
+      window.takeBillSnapshot?.();
       loadSavedBills();                   // load only once
       checkHtml2Pdf();                    // check for html2pdf.js
+      isBillSaved = true;
+      hasUserStarted = false;
       updateActionButtons?.();            // initialize buttons as disabled until started
+      try { lucide.createIcons(); } catch { }
     });
 
-
-    document.addEventListener('input', () => {
-      isBillSaved = false;
-      hasUserStarted = true;
-      updateActionButtons?.();
+    document.addEventListener('input', (e) => {
+      // Only track edits that occur inside the editable bill area on truly editable targets
+      const billEl = document.getElementById('bill');
+      if (billEl && billEl.contains(e.target)) {
+        if (e.target.isContentEditable || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+          isBillSaved = false;
+          hasUserStarted = true;
+          updateActionButtons?.();
+        }
+      }
     });
 
 
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
-    import { getFirestore, collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
+    import { getFirestore, collection, addDoc, getDocs, getDoc, deleteDoc, doc, updateDoc, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
     import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-analytics.js";
 
     const firebaseConfig = {
@@ -110,7 +133,13 @@
     function updateSaveButtonLabel() {
       const saveBtn = document.getElementById('saveBtn');
       if (!saveBtn) return;
-      saveBtn.textContent = currentDocId ? 'Save Changes' : 'Save Bill';
+      const textSpan = saveBtn.querySelector('.btn-text') || saveBtn.querySelector('span');
+      const label = currentDocId ? 'Save Changes' : 'Save Bill';
+      if (textSpan) {
+        textSpan.textContent = label;
+      } else {
+        saveBtn.textContent = label;
+      }
     }
 
     // Expose to window for non-module scripts
@@ -133,18 +162,328 @@
         if (downloadDisabled) downloadBtn.classList.add('opacity-50', 'cursor-not-allowed');
         else downloadBtn.classList.remove('opacity-50', 'cursor-not-allowed');
       }
+
+      // Update Top Status Badge if present
+      const badge = document.getElementById('billStatusBadge');
+      if (badge) {
+        if (!isBillSaved && hasUserStarted) {
+          badge.className = 'hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200/80';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span><span>Unsaved Changes</span>';
+        } else if (currentDocId) {
+          badge.className = 'hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/80';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span><span>Saved</span>';
+        } else {
+          badge.className = 'hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200/80';
+          badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span><span>New Bill</span>';
+        }
+      }
     }
 
     // Expose to window for non-module scripts
     window.updateActionButtons = updateActionButtons;
 
     function markActiveBill(docId) {
-      const items = document.querySelectorAll('.saved-bill-item');
+      const items = document.querySelectorAll('.saved-bill-card, .saved-bill-item');
       items.forEach(el => el.classList.remove('active'));
       if (!docId) return;
-      const el = document.querySelector(`.saved-bill-item[data-doc-id="${docId}"]`);
+      const el = document.querySelector(`.saved-bill-card[data-doc-id="${docId}"], .saved-bill-item[data-doc-id="${docId}"]`);
       if (el) el.classList.add('active');
     }
+
+    // 1. Custom Prompt Modal (Promise-based)
+    window.showPromptModal = function ({
+      title = 'Enter Name',
+      subtitle = 'Provide a name to continue',
+      label = 'Name',
+      placeholder = 'Enter name...',
+      defaultValue = '',
+      confirmText = 'Save'
+    } = {}) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('appPromptModal');
+        const titleEl = document.getElementById('appPromptTitle');
+        const subtitleEl = document.getElementById('appPromptSubtitle');
+        const labelEl = document.getElementById('appPromptInputLabel');
+        const inputEl = document.getElementById('appPromptInput');
+        const confirmBtn = document.getElementById('appPromptConfirmBtn');
+        const cancelBtn = document.getElementById('appPromptCancelBtn');
+        const confirmTextEl = document.getElementById('appPromptConfirmText');
+
+        if (!modal || !inputEl) {
+          const fallback = prompt(`${title}\n${subtitle}`, defaultValue);
+          resolve(fallback ? fallback.trim() : null);
+          return;
+        }
+
+        if (titleEl) titleEl.textContent = title;
+        if (subtitleEl) subtitleEl.textContent = subtitle;
+        if (labelEl) labelEl.textContent = label;
+        if (confirmTextEl) confirmTextEl.textContent = confirmText;
+        inputEl.placeholder = placeholder;
+        inputEl.value = defaultValue || '';
+
+        modal.classList.remove('hidden');
+        try { lucide.createIcons(); } catch { }
+
+        setTimeout(() => {
+          inputEl.focus();
+          inputEl.select();
+        }, 50);
+
+        function cleanup() {
+          modal.classList.add('hidden');
+          confirmBtn.removeEventListener('click', onConfirm);
+          cancelBtn.removeEventListener('click', onCancel);
+          inputEl.removeEventListener('keydown', onKeyDown);
+          modal.removeEventListener('click', onBackdropClick);
+        }
+
+        function onConfirm() {
+          const val = inputEl.value.trim();
+          cleanup();
+          resolve(val || null);
+        }
+
+        function onCancel() {
+          cleanup();
+          resolve(null);
+        }
+
+        function onKeyDown(e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onConfirm();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          }
+        }
+
+        function onBackdropClick(e) {
+          if (e.target === modal) {
+            onCancel();
+          }
+        }
+
+        confirmBtn.addEventListener('click', onConfirm);
+        cancelBtn.addEventListener('click', onCancel);
+        inputEl.addEventListener('keydown', onKeyDown);
+        modal.addEventListener('click', onBackdropClick);
+      });
+    };
+
+    // 2. Custom Confirm Modal (Promise-based)
+    window.showConfirmModal = function ({
+      title = 'Are you sure?',
+      subtitle = 'Please confirm this action',
+      message = 'This action cannot be undone.',
+      confirmText = 'Confirm',
+      cancelText = 'Cancel',
+      confirmColor = 'red' // 'red', 'blue', 'amber'
+    } = {}) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('appConfirmModal');
+        const titleEl = document.getElementById('appConfirmTitle');
+        const subtitleEl = document.getElementById('appConfirmSubtitle');
+        const msgEl = document.getElementById('appConfirmMessage');
+        const okBtn = document.getElementById('appConfirmOkBtn');
+        const cancelBtn = document.getElementById('appConfirmCancelBtn');
+        const okTextEl = document.getElementById('appConfirmOkText');
+        const iconBox = document.getElementById('appConfirmIconBox');
+
+        if (!modal) {
+          const fallback = confirm(`${title}\n${message}`);
+          resolve(fallback);
+          return;
+        }
+
+        if (titleEl) titleEl.textContent = title;
+        if (subtitleEl) subtitleEl.textContent = subtitle;
+        if (msgEl) msgEl.textContent = message;
+        if (okTextEl) okTextEl.textContent = confirmText;
+        if (cancelBtn) cancelBtn.textContent = cancelText;
+
+        if (okBtn && iconBox) {
+          okBtn.className = okBtn.className.replace(/bg-\w+-\d+/g, '').replace(/hover:bg-\w+-\d+/g, '');
+          iconBox.className = iconBox.className.replace(/bg-\w+-\d+/g, '').replace(/text-\w+-\d+/g, '');
+          if (confirmColor === 'red') {
+            okBtn.classList.add('bg-red-600', 'hover:bg-red-700');
+            iconBox.classList.add('bg-red-50', 'text-red-600');
+          } else if (confirmColor === 'amber') {
+            okBtn.classList.add('bg-amber-600', 'hover:bg-amber-700');
+            iconBox.classList.add('bg-amber-50', 'text-amber-600');
+          } else {
+            okBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+            iconBox.classList.add('bg-blue-50', 'text-blue-600');
+          }
+        }
+
+        modal.classList.remove('hidden');
+        try { lucide.createIcons(); } catch { }
+
+        function cleanup() {
+          modal.classList.add('hidden');
+          okBtn.removeEventListener('click', onOk);
+          cancelBtn.removeEventListener('click', onCancel);
+          window.removeEventListener('keydown', onKeyDown);
+          modal.removeEventListener('click', onBackdropClick);
+        }
+
+        function onOk() {
+          cleanup();
+          resolve(true);
+        }
+
+        function onCancel() {
+          cleanup();
+          resolve(false);
+        }
+
+        function onKeyDown(e) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            onOk();
+          }
+        }
+
+        function onBackdropClick(e) {
+          if (e.target === modal) {
+            onCancel();
+          }
+        }
+
+        okBtn.addEventListener('click', onOk);
+        cancelBtn.addEventListener('click', onCancel);
+        window.addEventListener('keydown', onKeyDown);
+        modal.addEventListener('click', onBackdropClick);
+      });
+    };
+
+    // 3. Custom Unsaved Changes Modal (Promise-based: 'save' | 'discard' | 'cancel')
+    window.showUnsavedModal = function ({
+      title = 'Unsaved Changes',
+      subtitle = 'You have unsaved changes on this bill',
+      message = 'Do you want to save your current bill before proceeding?'
+    } = {}) {
+      return new Promise((resolve) => {
+        const modal = document.getElementById('appUnsavedModal');
+        const titleEl = document.getElementById('appUnsavedTitle');
+        const subtitleEl = document.getElementById('appUnsavedSubtitle');
+        const msgEl = document.getElementById('appUnsavedMessage');
+        const saveBtn = document.getElementById('appUnsavedSaveBtn');
+        const discardBtn = document.getElementById('appUnsavedDiscardBtn');
+        const cancelBtn = document.getElementById('appUnsavedCancelBtn');
+
+        if (!modal) {
+          const fallback = confirm(`${title}\n${message}`);
+          resolve(fallback ? 'save' : 'discard');
+          return;
+        }
+
+        if (titleEl) titleEl.textContent = title;
+        if (subtitleEl) subtitleEl.textContent = subtitle;
+        if (msgEl) msgEl.textContent = message;
+
+        modal.classList.remove('hidden');
+        try { lucide.createIcons(); } catch { }
+
+        function cleanup() {
+          modal.classList.add('hidden');
+          saveBtn.removeEventListener('click', onSave);
+          discardBtn.removeEventListener('click', onDiscard);
+          cancelBtn.removeEventListener('click', onCancel);
+          window.removeEventListener('keydown', onKeyDown);
+          modal.removeEventListener('click', onBackdropClick);
+        }
+
+        function onSave() {
+          cleanup();
+          resolve('save');
+        }
+
+        function onDiscard() {
+          cleanup();
+          resolve('discard');
+        }
+
+        function onCancel() {
+          cleanup();
+          resolve('cancel');
+        }
+
+        function onKeyDown(e) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          }
+        }
+
+        function onBackdropClick(e) {
+          if (e.target === modal) {
+            onCancel();
+          }
+        }
+
+        saveBtn.addEventListener('click', onSave);
+        discardBtn.addEventListener('click', onDiscard);
+        cancelBtn.addEventListener('click', onCancel);
+        window.addEventListener('keydown', onKeyDown);
+        modal.addEventListener('click', onBackdropClick);
+      });
+    };
+
+    // Reusable bill row listeners for adding/removing items without native alerts
+    window.setupBillRowListeners = function () {
+      const invoiceItems = document.getElementById('invoiceItems');
+      const addItemBtn = document.getElementById('addItem');
+      const removeItemBtn = document.getElementById('removeItem');
+
+      if (addItemBtn && invoiceItems) {
+        const newAddBtn = addItemBtn.cloneNode(true);
+        addItemBtn.parentNode.replaceChild(newAddBtn, addItemBtn);
+        newAddBtn.addEventListener('click', () => {
+          const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
+          const newRow = document.createElement('tr');
+          newRow.className = 'text-center item-row';
+          newRow.innerHTML = `
+            <td>${rowCount}</td>
+            <td class="text-left" contenteditable="true" spellcheck="false"></td>
+            <td contenteditable="true" spellcheck="false"></td>
+            <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
+            <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
+            <td class="rate-cell text-right pr-1" contenteditable="true" spellcheck="false"></td>
+            <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
+          `;
+          invoiceItems.appendChild(newRow);
+          addInputListeners?.();
+          calculateTotal?.();
+          isBillSaved = false;
+          hasUserStarted = true;
+          updateActionButtons?.();
+        });
+      }
+
+      if (removeItemBtn && invoiceItems) {
+        const newRemoveBtn = removeItemBtn.cloneNode(true);
+        removeItemBtn.parentNode.replaceChild(newRemoveBtn, removeItemBtn);
+        newRemoveBtn.addEventListener('click', () => {
+          const rows = invoiceItems.querySelectorAll('.item-row');
+          if (rows.length > 1) {
+            rows[rows.length - 1].remove();
+            updateRowNumbers?.();
+            calculateTotal?.();
+            isBillSaved = false;
+            hasUserStarted = true;
+            updateActionButtons?.();
+          } else {
+            showToast('Cannot remove the last row. At least one item row must remain.', 'warning');
+          }
+        });
+      }
+    };
 
     window.saveBill = async function () {
       const billHTML = document.getElementById('bill').innerHTML;
@@ -152,34 +491,49 @@
       const hideHeaderState = !!hideHeaderCheckboxRef?.checked;
       const includeGSTCheckboxRef = document.getElementById('includeGST');
       const includeGSTState = includeGSTCheckboxRef ? includeGSTCheckboxRef.checked : true;
+      const includeSignatureCheckboxRef = document.getElementById('signatureCheckbox') || document.getElementById('includeSignatureTop');
+      const includeSignatureState = includeSignatureCheckboxRef ? includeSignatureCheckboxRef.checked : true;
 
       try {
-        showLoader();
         if (currentDocId) {
+          showLoader();
           // Editing existing bill: do not prompt for name, only update content/timestamp
           await updateDoc(doc(db, 'bills', currentDocId), {
             content: billHTML,
             hideHeader: hideHeaderState,
             includeGST: includeGSTState,
+            includeSignature: includeSignatureState,
             updatedAt: serverTimestamp(),
             timestamp: serverTimestamp()
           });
           isBillSaved = true;
           hasUserStarted = false; // Reset to disable Save button until next change
+          window.takeBillSnapshot?.();
           showToast('Changes saved!', 'success');
         } else {
-          // Creating new bill: prompt for a name
-          const customName = prompt("Enter a name for this bill:");
+          // Creating new bill: prompt for name using custom modal
+          const existingName = (document.getElementById('bill')?.dataset.customName || '').trim();
+          const customName = await window.showPromptModal({
+            title: 'Save New Bill',
+            subtitle: 'Give your bill a recognizable name',
+            label: 'Bill Name',
+            placeholder: 'e.g., Client XYZ / Project Alpha',
+            defaultValue: existingName || '',
+            confirmText: 'Save Bill'
+          });
+
           if (!customName) {
             showToast('Save cancelled: No name provided.', 'warning');
-            return;
+            return false;
           }
 
+          showLoader();
           const now = serverTimestamp();
           const billData = {
             content: billHTML,
             hideHeader: hideHeaderState,
             includeGST: includeGSTState,
+            includeSignature: includeSignatureState,
             createdAt: now,
             updatedAt: now,
             timestamp: now,
@@ -190,16 +544,20 @@
           currentDocId = docRef.id;
           const billElRef = document.getElementById('bill');
           if (billElRef) billElRef.dataset.customName = customName.trim();
+          window.updateHeaderDocTitle?.(customName.trim());
           isBillSaved = true;
           hasUserStarted = false; // Reset to disable Save button until next change
+          window.takeBillSnapshot?.();
           showToast('Bill saved successfully!', 'success');
         }
         updateSaveButtonLabel();
         loadSavedBills();
         updateActionButtons?.();
+        return true;
       } catch (error) {
         console.error('Error saving bill:', error);
         showToast('Error saving bill. Please try again.', 'error');
+        return false;
       } finally {
         hideLoader();
       }
@@ -207,25 +565,35 @@
 
 
     window.deleteBill = async function (docId, event) {
-      event.stopPropagation();
-
-      // Debug log to confirm it's triggered
-      console.log("🧪 deleteBill() triggered with ID:", docId);
+      if (event) event.stopPropagation();
 
       if (!docId || typeof docId !== 'string') {
-        console.error("❌ Invalid document ID passed to deleteBill");
         showToast("Could not delete: Invalid document ID.", 'error');
         return;
       }
 
-      const confirmDelete = confirm("Are you sure you want to delete this bill?");
+      const bill = (window.billsCache && window.billsCache[docId]) || {};
+      const billName = bill.customName || 'this bill';
+
+      const confirmDelete = await window.showConfirmModal({
+        title: 'Delete Bill',
+        subtitle: 'Permanent Action',
+        message: `Are you sure you want to delete "${billName}"? This action cannot be undone.`,
+        confirmText: 'Delete Bill',
+        cancelText: 'Keep Bill',
+        confirmColor: 'red'
+      });
       if (!confirmDelete) return;
 
       try {
         showLoader();
         await deleteDoc(doc(db, 'bills', docId));
-        console.log("✅ Deleted bill:", docId);
         showToast('Bill deleted successfully!', 'success');
+        if (currentDocId === docId) {
+          currentDocId = null;
+          updateSaveButtonLabel?.();
+          updateActionButtons?.();
+        }
         loadSavedBills();
       } catch (error) {
         console.error('❌ Error deleting bill:', error.message, error);
@@ -236,114 +604,272 @@
     };
 
 
-    window.renameBill = async function (docId, currentName, event) {
-      event.stopPropagation();
-      const newName = prompt("Enter new name for this bill:", currentName);
-      if (!newName || newName === currentName) return;
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+    window.escapeHtml = escapeHtml;
+
+    window.billsCache = {};
+
+    window.startNewBill = async function () {
+      const hasActualChanges = (!isBillSaved && hasUserStarted) && (window.hasBillContentChanged ? window.hasBillContentChanged() : true);
+      if (hasActualChanges) {
+        const action = await window.showUnsavedModal({
+          title: 'Unsaved Changes',
+          subtitle: 'Current bill has unsaved edits',
+          message: 'You have unsaved changes in the current bill. Do you want to save before creating a new one?'
+        });
+        if (action === 'cancel') {
+          return;
+        }
+        if (action === 'save') {
+          const saved = await window.saveBill();
+          if (!saved) return;
+        }
+        // if action === 'discard', proceed to reset bill
+      }
+
+      const billEl = document.getElementById('bill');
+      billEl.innerHTML = defaultBillHTML;
+      billEl.dataset.customName = '';
+      window.updateHeaderDocTitle?.('');
+      addInputListeners();
+      initializeAllRows?.();
+      calculateTotal();
+      toggleSideNav();
+      showToast("New bill started", 'info');
+      isBillSaved = true; // Clean pristine new bill
+      currentDocId = null;
+      updateSaveButtonLabel?.();
+      hasUserStarted = false;
+      updateActionButtons?.();
+
+      const hideHeaderCheckbox = document.getElementById('hideHeader');
+      const headerContainer = document.getElementById('header-container');
+      const billRef = document.getElementById('bill');
+      if (hideHeaderCheckbox) hideHeaderCheckbox.checked = false;
+      if (headerContainer) headerContainer.style.display = 'block';
+      if (billRef) billRef.classList.remove('header-hidden');
+
+      const includeGSTCheckbox = document.getElementById('includeGST');
+      const gstToggleLabel = document.getElementById('gstToggleLabel');
+      const gstRow = document.getElementById('gst-row');
+      if (includeGSTCheckbox) {
+        includeGSTCheckbox.checked = true;
+        if (gstToggleLabel) gstToggleLabel.textContent = 'Include GST';
+        if (gstRow) gstRow.style.display = '';
+      }
+
+      if (window.ensureSignatureElement) window.ensureSignatureElement();
+      if (window.setSignatureState) window.setSignatureState(true);
+      if (window.setupSignatureToggle) window.setupSignatureToggle();
+      if (window.ensureItemRowActions) window.ensureItemRowActions();
+
+      window.setupBillRowListeners?.();
+      window.takeBillSnapshot?.();
+      markActiveBill(null);
+      try { lucide.createIcons(); } catch { }
+    };
+
+    // Duplicate Bill Functions
+    window.openDuplicateModal = function (docId, event) {
+      if (event) event.stopPropagation();
+      const bill = (window.billsCache && window.billsCache[docId]) || {};
+      const currentName = bill.customName || 'Bill';
+      const modal = document.getElementById('duplicateModal');
+      const input = document.getElementById('duplicateBillNameInput');
+      if (!modal || !input) return;
+
+      window.activeDuplicateDocId = docId;
+      input.value = `${currentName} - Copy`;
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 50);
+      try { lucide.createIcons(); } catch { }
+    };
+
+    window.closeDuplicateModal = function () {
+      const modal = document.getElementById('duplicateModal');
+      if (modal) modal.classList.add('hidden');
+      window.activeDuplicateDocId = null;
+    };
+
+    window.executeDuplicateBill = async function () {
+      const docId = window.activeDuplicateDocId;
+      const input = document.getElementById('duplicateBillNameInput');
+      if (!docId || !input) return;
+
+      const newName = input.value.trim() || 'Untitled Bill Copy';
+      window.closeDuplicateModal();
+
       try {
         showLoader();
-        await updateDoc(doc(db, 'bills', docId), { customName: newName.trim() });
-        showToast('Bill name updated!', 'success');
-        loadSavedBills();
-      } catch (error) {
-        console.error('Rename error:', error);
-        showToast('Could not rename.', 'error');
+        let sourceBill = window.billsCache && window.billsCache[docId];
+        if (!sourceBill) {
+          const snap = await getDoc(doc(db, 'bills', docId));
+          if (snap.exists()) sourceBill = snap.data();
+        }
+        if (!sourceBill) {
+          showToast('Could not find original bill to duplicate.', 'error');
+          return;
+        }
+
+        const now = serverTimestamp();
+        const duplicateData = {
+          content: sourceBill.content || '',
+          hideHeader: sourceBill.hideHeader !== undefined ? sourceBill.hideHeader : false,
+          includeGST: sourceBill.includeGST !== undefined ? sourceBill.includeGST : true,
+          includeSignature: sourceBill.includeSignature !== undefined ? sourceBill.includeSignature : true,
+          customName: newName,
+          createdAt: now,
+          updatedAt: now,
+          timestamp: now
+        };
+
+        const docRef = await addDoc(collection(db, 'bills'), duplicateData);
+        showToast(`Bill duplicated as "${newName}"!`, 'success');
+
+        await window.loadSavedBills();
+
+        window.loadBill(docRef.id, duplicateData);
+        markActiveBill(docRef.id);
+      } catch (err) {
+        console.error('Error duplicating bill:', err);
+        showToast('Error duplicating bill: ' + err.message, 'error');
       } finally {
         hideLoader();
       }
     };
 
+    // Rename Bill Functions
+    window.openRenameModal = function (docId, event) {
+      if (event) event.stopPropagation();
+      const bill = (window.billsCache && window.billsCache[docId]) || {};
+      const currentName = bill.customName || '';
+      const modal = document.getElementById('renameModal');
+      const input = document.getElementById('renameBillNameInput');
+      if (!modal || !input) return;
+
+      window.activeRenameDocId = docId;
+      input.value = currentName;
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 50);
+      try { lucide.createIcons(); } catch { }
+    };
+
+    window.closeRenameModal = function () {
+      const modal = document.getElementById('renameModal');
+      if (modal) modal.classList.add('hidden');
+      window.activeRenameDocId = null;
+    };
+
+    window.executeRenameBill = async function () {
+      const docId = window.activeRenameDocId;
+      const input = document.getElementById('renameBillNameInput');
+      if (!docId || !input) return;
+
+      const newName = input.value.trim();
+      if (!newName) {
+        showToast('Please enter a valid bill name.', 'warning');
+        return;
+      }
+
+      window.closeRenameModal();
+
+      try {
+        showLoader();
+        await updateDoc(doc(db, 'bills', docId), {
+          customName: newName,
+          updatedAt: serverTimestamp()
+        });
+        if (currentDocId === docId) {
+          const billElRef = document.getElementById('bill');
+          if (billElRef) billElRef.dataset.customName = newName;
+          window.updateHeaderDocTitle?.(newName);
+        }
+        showToast('Bill name updated!', 'success');
+        await window.loadSavedBills();
+      } catch (error) {
+        console.error('Rename error:', error);
+        showToast('Could not rename bill.', 'error');
+      } finally {
+        hideLoader();
+      }
+    };
+
+    window.renameCurrentBill = async function (rawName) {
+      const newName = (rawName || '').trim();
+      const finalDisplayName = newName || 'Untitled Bill';
+      const billElRef = document.getElementById('bill');
+      if (billElRef) billElRef.dataset.customName = (newName === 'Untitled Bill' ? '' : newName);
+      window.updateHeaderDocTitle?.(newName === 'Untitled Bill' ? '' : newName);
+
+      if (currentDocId) {
+        try {
+          showLoader();
+          await updateDoc(doc(db, 'bills', currentDocId), {
+            customName: finalDisplayName,
+            updatedAt: serverTimestamp()
+          });
+          if (window.billsCache && window.billsCache[currentDocId]) {
+            window.billsCache[currentDocId].customName = finalDisplayName;
+          }
+          showToast(`File name updated: "${finalDisplayName}"`, 'success');
+          await window.loadSavedBills?.();
+        } catch (error) {
+          console.error('Rename error:', error);
+          showToast('Could not rename bill in cloud.', 'error');
+        } finally {
+          hideLoader();
+        }
+      } else {
+        hasUserStarted = true;
+        isBillSaved = false;
+        window.updateActionButtons?.();
+        showToast(`File name set: "${finalDisplayName}"`, 'info');
+      }
+    };
+
+    window.filterBillsList = function (searchTerm) {
+      const queryStr = (searchTerm || '').toLowerCase().trim();
+      const cards = document.querySelectorAll('.saved-bill-card');
+      let matchCount = 0;
+      cards.forEach(card => {
+        const billName = (card.getAttribute('data-bill-name') || '').toLowerCase();
+        const isMatch = !queryStr || billName.includes(queryStr);
+        card.style.display = isMatch ? '' : 'none';
+        if (isMatch) matchCount++;
+      });
+      const emptySearch = document.getElementById('emptySearchState');
+      if (emptySearch) {
+        if (matchCount === 0 && cards.length > 0) {
+          emptySearch.classList.remove('hidden');
+          emptySearch.classList.add('flex');
+        } else {
+          emptySearch.classList.add('hidden');
+          emptySearch.classList.remove('flex');
+        }
+      }
+    };
+
     window.loadSavedBills = async function () {
       const savedBillsList = document.getElementById('savedBillsList');
+      const billsCountEl = document.getElementById('savedBillsCount');
+      if (!savedBillsList) return;
+
       savedBillsList.innerHTML = '';
-
-      // ✅ Check if "+ New Bill" button already exists
-      if (!document.getElementById('newBillButton')) {
-        const newBillBtn = document.createElement('div');
-        newBillBtn.id = 'newBillButton'; // Unique ID to prevent duplication
-        newBillBtn.className = 'saved-bill-item font-semibold text-blue-600 cursor-pointer hover:underline';
-        newBillBtn.textContent = '+ New Bill';
-        newBillBtn.onclick = async () => {
-          if (!isBillSaved) {
-            const confirmSave = confirm("You have unsaved changes.\nDo you want to save the current bill before creating a new one?");
-            if (confirmSave) {
-              await window.saveBill();
-            } else {
-              return;
-            }
-          }
-
-          const billEl = document.getElementById('bill');
-          billEl.innerHTML = defaultBillHTML; // ✅ Restore full layout
-          addInputListeners();                // Re-activate all input logic
-          initializeAllRows?.();             // Optional: re-initialize unit listeners
-          calculateTotal();                  // Recalculate totals
-          toggleSideNav();                   // Close side nav
-          showToast("New bill started", 'info');
-          isBillSaved = false;
-          currentDocId = null;               // New context
-          updateSaveButtonLabel?.();
-          hasUserStarted = false;            // fresh state until the user edits
-          updateActionButtons?.();
-          // Ensure header is visible and checkbox unchecked on new bill
-          const hideHeaderCheckbox = document.getElementById('hideHeader');
-          const headerContainer = document.getElementById('header-container');
-          const billRef = document.getElementById('bill');
-          if (hideHeaderCheckbox) hideHeaderCheckbox.checked = false;
-          if (headerContainer) headerContainer.style.display = 'block';
-          if (billRef) billRef.classList.remove('header-hidden');
-          // Reset GST toggle to "Include GST" (checked) for new bill
-          const includeGSTCheckbox = document.getElementById('includeGST');
-          const gstToggleLabel = document.getElementById('gstToggleLabel');
-          const gstRow = document.getElementById('gst-row');
-          if (includeGSTCheckbox) {
-            includeGSTCheckbox.checked = true;
-            if (gstToggleLabel) gstToggleLabel.textContent = 'Include GST';
-            if (gstRow) gstRow.style.display = '';
-          }
-          // Re-attach button event listeners for Add Item and Remove Fields
-          const invoiceItems = document.getElementById('invoiceItems');
-          const addItemBtn = document.getElementById('addItem');
-          const removeItemBtn = document.getElementById('removeItem');
-
-          if (addItemBtn && invoiceItems) {
-            addItemBtn.addEventListener('click', () => {
-              const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
-              const newRow = document.createElement('tr');
-              newRow.className = 'text-center item-row';
-              newRow.innerHTML = `
-                <td>${rowCount}</td>
-                <td class="text-left" contenteditable="true" spellcheck="false"></td>
-                <td contenteditable="true" spellcheck="false"></td>
-                <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
-                <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
-                <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
-                <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
-              `;
-              invoiceItems.appendChild(newRow);
-              addInputListeners();
-              calculateTotal?.();
-            });
-          }
-          if (removeItemBtn && invoiceItems) {
-            removeItemBtn.addEventListener('click', () => {
-              const rows = invoiceItems.querySelectorAll('.item-row');
-              if (rows.length > 1) {
-                rows[rows.length - 1].remove();
-                updateRowNumbers?.();
-                calculateTotal?.();
-              } else {
-                alert('Cannot remove the last row. At least one item row must remain.');
-              }
-            });
-          }
-          markActiveBill(null);
-        };
-
-
-
-        savedBillsList.appendChild(newBillBtn);
-      }
+      window.billsCache = {};
 
       try {
         showLoader();
@@ -351,16 +877,16 @@
         const snapshot = await getDocs(q);
 
         const seenIds = new Set();
+        let totalCount = 0;
 
         snapshot.forEach(docSnap => {
           const bill = docSnap.data();
           const docId = docSnap.id;
-          if (seenIds.has(docId)) return; // prevent duplication
+          if (seenIds.has(docId)) return;
           seenIds.add(docId);
+          window.billsCache[docId] = bill;
+          totalCount++;
 
-          const billItem = document.createElement('div');
-          billItem.className = 'saved-bill-item group';
-          billItem.setAttribute('data-doc-id', docId);
           const createdMs = bill.createdAt ? toMillis(bill.createdAt) : null;
           const updatedMs = bill.updatedAt ? toMillis(bill.updatedAt) : null;
           const hasBeenModified = !!updatedMs && (!createdMs || updatedMs > createdMs);
@@ -369,215 +895,244 @@
             ? (bill.updatedAt)
             : (bill.createdAt || bill.timestamp);
 
-          billItem.innerHTML = `
-  <div class="flex justify-between items-center">
-    <div>
-      <div class="font-bold">Name: ${bill.customName || 'Unnamed Bill'}</div>
-      <div class="text-xs text-gray-500">
-        ${dateToShow ? label + ': ' + formatFirestoreTimestamp(dateToShow) : ''}
-      </div>
-    </div>
-    <button title="Delete" onclick="deleteBill('${docId}', event)" class="text-red-600 hover:text-red-800 ml-2">
-      <i data-lucide="trash-2" class="w-5 h-5"></i>
-    </button>
-  </div>
-`;
+          const billCard = document.createElement('div');
+          billCard.className = 'saved-bill-card group relative p-2.5 rounded-xl border border-gray-100 hover:border-blue-200 bg-white hover:bg-blue-50/25 transition-all duration-150 cursor-pointer shadow-xs hover:shadow-sm mb-1.5 select-none';
+          billCard.setAttribute('data-doc-id', docId);
+          billCard.setAttribute('data-bill-name', (bill.customName || 'Unnamed Bill').toLowerCase());
 
+          billCard.innerHTML = `
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex items-start gap-2.5 min-w-0 flex-1">
+                <div class="bill-icon-box w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-blue-600 group-hover:text-white transition duration-200">
+                  <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="font-semibold text-gray-800 text-xs group-hover:text-blue-600 transition flex items-center gap-1.5 min-w-0" title="${escapeHtml(bill.customName || 'Unnamed Bill')}">
+                    <span class="truncate flex-1">${escapeHtml(bill.customName || 'Unnamed Bill')}</span>
+                    <span class="active-indicator-tag hidden items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-600 text-white leading-none shrink-0 shadow-2xs">
+                      <span class="w-1 h-1 rounded-full bg-white animate-pulse"></span>
+                      <span>OPEN</span>
+                    </span>
+                  </div>
+                  <div class="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1.5 truncate">
+                    <span class="inline-block w-1.5 h-1.5 rounded-full ${hasBeenModified ? 'bg-amber-400' : 'bg-emerald-400'} shrink-0"></span>
+                    <span>${label}: ${dateToShow ? formatFirestoreTimestamp(dateToShow) : 'Just now'}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="flex items-center gap-0.5 shrink-0 opacity-70 group-hover:opacity-100 transition pl-1">
+                <button title="Duplicate Bill" onclick="window.openDuplicateModal('${docId}', event)" class="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition cursor-pointer" aria-label="Duplicate">
+                  <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                </button>
+                <button title="Rename Bill" onclick="window.openRenameModal('${docId}', event)" class="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition cursor-pointer" aria-label="Rename">
+                  <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                </button>
+                <button title="Delete Bill" onclick="deleteBill('${docId}', event)" class="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition cursor-pointer" aria-label="Delete">
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+            </div>
+          `;
 
-          billItem.onclick = () => { loadBill(docId, bill); markActiveBill(docId); };
-          savedBillsList.appendChild(billItem);
-          if (currentDocId && currentDocId === docId) billItem.classList.add('active');
+          billCard.onclick = () => {
+            loadBill(docId, bill);
+            markActiveBill(docId);
+          };
+
+          savedBillsList.appendChild(billCard);
+          if (currentDocId && currentDocId === docId) billCard.classList.add('active');
         });
+
+        if (billsCountEl) {
+          billsCountEl.textContent = `${totalCount} ${totalCount === 1 ? 'bill' : 'bills'}`;
+        }
+
+        if (totalCount === 0) {
+          savedBillsList.innerHTML = `
+            <div class="flex flex-col items-center justify-center py-10 text-center text-gray-400">
+              <div class="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-300 mb-2.5">
+                <i data-lucide="folder-plus" class="w-6 h-6"></i>
+              </div>
+              <p class="text-xs font-semibold text-gray-600">No saved bills yet</p>
+              <p class="text-[11px] text-gray-400 mt-0.5">Click 'Create New Bill' above to start</p>
+            </div>
+          `;
+        }
+
+        const searchInput = document.getElementById('billSearchInput');
+        if (searchInput && searchInput.value) {
+          window.filterBillsList(searchInput.value);
+        }
       } catch (error) {
         console.error('Error loading bills:', error);
         showToast('Error loading saved bills.', 'error');
       } finally {
         hideLoader();
+        try { lucide.createIcons(); } catch { }
       }
-      lucide.createIcons(); // ⬅️ This renders all <i data-lucide="..."> icons
-
     };
 
-    window.loadBill = function (docId, billData) {
+    window.loadBill = async function (docId, billData) {
       // Only show warning if user has actually made changes to the current bill
-      const hasActualChanges = !isBillSaved && hasUserStarted;
-      if (!hasActualChanges || confirm('Load this bill? Current changes will be lost.')) {
-        const billEl = document.getElementById('bill');
-        billEl.innerHTML = billData.content;
-        billEl.dataset.customName = billData.customName || '';
+      const hasActualChanges = (!isBillSaved && hasUserStarted) && (window.hasBillContentChanged ? window.hasBillContentChanged() : true);
+      if (hasActualChanges) {
+        const action = await window.showUnsavedModal({
+          title: 'Unsaved Changes',
+          subtitle: 'Current bill has unsaved edits',
+          message: 'You have unsaved changes in the current bill. Do you want to save before loading another bill?'
+        });
+        if (action === 'cancel') {
+          return;
+        }
+        if (action === 'save') {
+          const saved = await window.saveBill();
+          if (!saved) return;
+        }
+        // if action === 'discard', proceed to load
+      }
 
-        // Re-bind listeners for newly injected elements
-        addInputListeners?.();
-        initializeAllRows?.();
+      const billEl = document.getElementById('bill');
+      billEl.innerHTML = billData.content;
+      billEl.dataset.customName = billData.customName || '';
+      window.updateHeaderDocTitle?.(billData.customName || '');
 
-        // Mark context as editing existing document
-        currentDocId = docId;
-        isBillSaved = true;
-        updateSaveButtonLabel?.();
-        hasUserStarted = false; // not started until user changes something
-        updateActionButtons?.();
+      // Re-bind listeners for newly injected elements
+      addInputListeners?.();
+      initializeAllRows?.();
 
-        // Re-bind inner controls that live inside #bill
-        const invoiceItems = document.getElementById('invoiceItems');
-        const addItemBtn = document.getElementById('addItem');
-        const removeItemBtn = document.getElementById('removeItem');
-        const hideHeaderCheckbox = document.getElementById('hideHeader');
-        const headerContainer = document.getElementById('header-container');
-        const uploadInput = document.getElementById('uploadHeader');
-        const gstinEl = document.getElementById('gstinInput');
+      // Mark context as editing existing document
+      currentDocId = docId;
+      isBillSaved = true;
+      updateSaveButtonLabel?.();
+      hasUserStarted = false; // not started until user changes something
+      updateActionButtons?.();
 
-        // Apply saved header visibility state if present; default to visible
-        const savedHide = !!billData.hideHeader;
-        const footerContainer = document.getElementById('footer-container');
-        if (hideHeaderCheckbox) hideHeaderCheckbox.checked = savedHide;
-        if (savedHide) {
-          if (headerContainer) headerContainer.style.display = 'none';
-          if (footerContainer) footerContainer.style.display = 'none';
-          billEl.classList.add('header-hidden');
-        } else {
-          if (headerContainer) headerContainer.style.display = 'block';
-          if (footerContainer) footerContainer.style.display = 'block';
-          billEl.classList.remove('header-hidden');
+      // Re-bind inner controls that live inside #bill
+      const hideHeaderCheckbox = document.getElementById('hideHeader');
+      const headerContainer = document.getElementById('header-container');
+      const uploadInput = document.getElementById('uploadHeader');
+      const gstinEl = document.getElementById('gstinInput');
+
+      // Apply saved header visibility state if present; default to visible
+      const savedHide = !!billData.hideHeader;
+      const footerContainer = document.getElementById('footer-container');
+      if (hideHeaderCheckbox) hideHeaderCheckbox.checked = savedHide;
+      if (savedHide) {
+        if (headerContainer) headerContainer.style.display = 'none';
+        if (footerContainer) footerContainer.style.display = 'none';
+        billEl.classList.add('header-hidden');
+      } else {
+        if (headerContainer) headerContainer.style.display = 'block';
+        if (footerContainer) footerContainer.style.display = 'block';
+        billEl.classList.remove('header-hidden');
+      }
+
+      if (hideHeaderCheckbox && headerContainer) {
+        hideHeaderCheckbox.addEventListener('change', () => {
+          if (hideHeaderCheckbox.checked) {
+            headerContainer.style.display = 'none';
+            if (footerContainer) footerContainer.style.display = 'none';
+            billEl.classList.add('header-hidden');
+          } else {
+            headerContainer.style.display = 'block';
+            if (footerContainer) footerContainer.style.display = 'block';
+            billEl.classList.remove('header-hidden');
+          }
+        });
+      }
+
+      // Apply saved GST toggle state if present; default to Include GST (true)
+      const includeGSTCheckbox = document.getElementById('includeGST');
+      const gstToggleLabel = document.getElementById('gstToggleLabel');
+      const gstRow = document.getElementById('gst-row');
+      const savedIncludeGST = billData.includeGST !== undefined ? billData.includeGST : true;
+
+      // Apply saved Signature toggle state if present; default to true
+      const savedIncludeSignature = billData.includeSignature !== undefined ? billData.includeSignature : true;
+      if (window.ensureSignatureElement) window.ensureSignatureElement();
+      if (window.setSignatureState) window.setSignatureState(savedIncludeSignature);
+      if (window.setupSignatureToggle) window.setupSignatureToggle();
+
+      if (includeGSTCheckbox) {
+        // Remove old event listeners by cloning the checkbox
+        const newGSTCheckbox = includeGSTCheckbox.cloneNode(true);
+        includeGSTCheckbox.parentNode.replaceChild(newGSTCheckbox, includeGSTCheckbox);
+
+        // Get fresh reference
+        const freshGSTCheckbox = document.getElementById('includeGST');
+        freshGSTCheckbox.checked = savedIncludeGST;
+
+        // Update display immediately
+        if (gstToggleLabel) {
+          gstToggleLabel.textContent = (window.innerWidth < 640)
+            ? (savedIncludeGST ? 'GST' : 'No GST')
+            : (savedIncludeGST ? 'Include GST' : 'Without GST');
+        }
+        if (gstRow) {
+          gstRow.style.display = savedIncludeGST ? '' : 'none';
         }
 
-        if (hideHeaderCheckbox && headerContainer) {
-          hideHeaderCheckbox.addEventListener('change', () => {
-            if (hideHeaderCheckbox.checked) {
-              headerContainer.style.display = 'none';
-              if (footerContainer) footerContainer.style.display = 'none';
-              billEl.classList.add('header-hidden');
-            } else {
-              headerContainer.style.display = 'block';
-              if (footerContainer) footerContainer.style.display = 'block';
-              billEl.classList.remove('header-hidden');
-            }
-          });
-        }
-
-        // Apply saved GST toggle state if present; default to Include GST (true)
-        const includeGSTCheckbox = document.getElementById('includeGST');
-        const gstToggleLabel = document.getElementById('gstToggleLabel');
-        const gstRow = document.getElementById('gst-row');
-        const savedIncludeGST = billData.includeGST !== undefined ? billData.includeGST : true;
-
-        if (includeGSTCheckbox) {
-          // Remove old event listeners by cloning the checkbox
-          const newGSTCheckbox = includeGSTCheckbox.cloneNode(true);
-          includeGSTCheckbox.parentNode.replaceChild(newGSTCheckbox, includeGSTCheckbox);
-
-          // Get fresh reference
-          const freshGSTCheckbox = document.getElementById('includeGST');
-          freshGSTCheckbox.checked = savedIncludeGST;
-
-          // Update display immediately
+        // Re-attach event listener for dynamic GST toggle
+        const updateGSTDisplay = () => {
+          const includeGST = freshGSTCheckbox.checked;
           if (gstToggleLabel) {
-            gstToggleLabel.textContent = savedIncludeGST ? 'Include GST' : 'Without GST';
+            gstToggleLabel.textContent = (window.innerWidth < 640)
+              ? (includeGST ? 'GST' : 'No GST')
+              : (includeGST ? 'Include GST' : 'Without GST');
           }
           if (gstRow) {
-            gstRow.style.display = savedIncludeGST ? '' : 'none';
+            gstRow.style.display = includeGST ? '' : 'none';
           }
+          calculateTotal?.();
+          // Mark bill as unsaved when GST toggle changes
+          isBillSaved = false;
+          hasUserStarted = true;
+          updateActionButtons?.();
+        };
 
-          // Re-attach event listener for dynamic GST toggle
-          const updateGSTDisplay = () => {
-            const includeGST = freshGSTCheckbox.checked;
-            if (gstToggleLabel) {
-              gstToggleLabel.textContent = includeGST ? 'Include GST' : 'Without GST';
-            }
-            if (gstRow) {
-              gstRow.style.display = includeGST ? '' : 'none';
-            }
-            calculateTotal?.();
-            // Mark bill as unsaved when GST toggle changes
-            isBillSaved = false;
-            hasUserStarted = true;
-            updateActionButtons?.();
-          };
-
-          freshGSTCheckbox.addEventListener('change', updateGSTDisplay);
-        }
-
-        // Recalculate total after loading GST state
-        calculateTotal?.();
-
-        // Remove old event listeners if they exist (clone the button to remove all listeners)
-        if (addItemBtn) {
-          const newAddBtn = addItemBtn.cloneNode(true);
-          addItemBtn.parentNode.replaceChild(newAddBtn, addItemBtn);
-        }
-        if (removeItemBtn) {
-          const newRemoveBtn = removeItemBtn.cloneNode(true);
-          removeItemBtn.parentNode.replaceChild(newRemoveBtn, removeItemBtn);
-        }
-
-        // Get fresh references after cloning
-        const freshAddItemBtn = document.getElementById('addItem');
-        const freshRemoveItemBtn = document.getElementById('removeItem');
-
-        if (freshAddItemBtn && invoiceItems) {
-          freshAddItemBtn.addEventListener('click', () => {
-            const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
-            const newRow = document.createElement('tr');
-            newRow.className = 'text-center item-row';
-            newRow.innerHTML = `
-          <td>${rowCount}</td>
-          <td class="text-left" contenteditable="true" spellcheck="false"></td>
-          <td contenteditable="true" spellcheck="false"></td>
-          <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
-        `;
-            invoiceItems.appendChild(newRow);
-            addInputListeners?.();
-            calculateTotal?.();
-          });
-        }
-
-        if (freshRemoveItemBtn && invoiceItems) {
-          freshRemoveItemBtn.addEventListener('click', () => {
-            const rows = invoiceItems.querySelectorAll('.item-row');
-            if (rows.length > 1) {
-              rows[rows.length - 1].remove();
-              updateRowNumbers?.();
-              calculateTotal?.();
-            } else {
-              alert('Cannot remove the last row. At least one item row must remain.');
-            }
-          });
-        }
-
-        if (uploadInput) {
-          uploadInput.addEventListener('change', function (event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = function (e) {
-              const customHeaderURL = e.target.result;
-              const headerImg = document.getElementById('company-header-image');
-
-              if (headerImg) {
-                headerImg.src = customHeaderURL;
-                headerImg.setAttribute('data-custom', 'true');
-                showToast("Custom header applied for this session.", 'success');
-              }
-            };
-            reader.readAsDataURL(file);
-          });
-        }
-
-        // Re-attach GSTIN validation on loaded content
-        if (gstinEl) {
-          gstinEl.removeEventListener('blur', validateGSTINInput);
-          gstinEl.removeEventListener('input', handleGSTINInput);
-          gstinEl.addEventListener('blur', validateGSTINInput);
-          gstinEl.addEventListener('input', handleGSTINInput);
-        }
-
-        calculateTotal?.();
-        toggleSideNav?.();
-        markActiveBill(docId);
+        freshGSTCheckbox.addEventListener('change', updateGSTDisplay);
       }
+
+      // Recalculate total after loading GST state
+      calculateTotal?.();
+
+      // Bind row listeners without native alerts
+      if (window.ensureItemRowActions) window.ensureItemRowActions();
+      window.setupBillRowListeners?.();
+
+      if (uploadInput) {
+        uploadInput.addEventListener('change', function (event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            const customHeaderURL = e.target.result;
+            const headerImg = document.getElementById('company-header-image');
+
+            if (headerImg) {
+              headerImg.src = customHeaderURL;
+              headerImg.setAttribute('data-custom', 'true');
+              showToast("Custom header applied for this session.", 'success');
+            }
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      // Re-attach GSTIN validation on loaded content
+      if (gstinEl) {
+        gstinEl.removeEventListener('blur', validateGSTINInput);
+        gstinEl.removeEventListener('input', handleGSTINInput);
+        gstinEl.addEventListener('blur', validateGSTINInput);
+        gstinEl.addEventListener('input', handleGSTINInput);
+      }
+
+      calculateTotal?.();
+      toggleSideNav?.();
+      markActiveBill(docId);
+      window.takeBillSnapshot?.();
     };
 
     // type: 'success' | 'error' | 'info' | 'warning'
@@ -666,7 +1221,11 @@
       label[for="hideHeader"],
       #includeGST,
       label[for="includeGST"],
-      #gstToggleLabel {
+      #gstToggleLabel,
+      #includeSignatureTop,
+      label[for="includeSignatureTop"],
+      #signature-toggle-container,
+      .no-print {
         display: none !important;
       }
     }
@@ -677,11 +1236,15 @@
       background: white;
       margin: auto;
       padding: 10mm 15mm 15mm 15mm;
-      box-shadow: 0 0 5px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.08), 0 2px 8px -2px rgba(15, 23, 42, 0.04);
+      border-radius: 1.5rem;
+      border: 1px solid rgba(226, 232, 240, 0.85);
       font-size: 13px;
       color: black;
       -webkit-user-select: text;
       user-select: text;
+      transition: all 0.2s ease;
+      overflow: hidden;
     }
 
     /* Add top space when header is hidden */
@@ -696,6 +1259,42 @@
       user-select: text;
       outline: none;
       cursor: text;
+    }
+
+    #header-container {
+      width: calc(100% + 30mm);
+      margin-top: -5mm;
+      margin-left: -15mm;
+      margin-right: -15mm;
+      margin-bottom: 5mm;
+      padding: 0;
+      box-sizing: border-box;
+      display: block;
+    }
+
+    #company-header-image {
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      display: block !important;
+    }
+
+    #footer-container {
+      width: calc(100% + 30mm);
+      margin-left: -15mm;
+      margin-right: -15mm;
+      margin-bottom: -15mm;
+      margin-top: 3rem;
+      padding: 0;
+      box-sizing: border-box;
+      display: block;
+    }
+
+    #company-footer-image {
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      display: block !important;
     }
 
     table {
@@ -713,6 +1312,21 @@
     td {
       padding: 3px 5px;
       vertical-align: top;
+    }
+
+    .rate-cell {
+      text-align: right !important;
+      padding-right: 6px !important;
+      white-space: nowrap !important;
+    }
+
+    .amount,
+    .total-amount,
+    #gst-total-amount,
+    .total-in-words {
+      text-align: right !important;
+      padding-right: 6px !important;
+      white-space: nowrap !important;
     }
 
     .invoice-title {
@@ -737,17 +1351,136 @@
       box-shadow: none;
     }
 
+    /* Table Action Controls (Add/Remove Item) attached to table fields */
+    .table-hover-wrapper {
+      position: relative;
+    }
+
+    .table-action-bar {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-4px);
+      transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .table-hover-wrapper:hover .table-action-bar,
+    .table-hover-wrapper:focus-within .table-action-bar,
+    .table-action-bar:hover,
+    .table-action-bar:focus-within {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    .item-row {
+      transition: background-color 0.15s ease;
+    }
+
+    .item-row:hover {
+      background-color: rgba(241, 245, 249, 0.6);
+    }
+
+    @media (hover: none), (max-width: 640px) {
+      .table-action-bar {
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        transform: none !important;
+      }
+    }
+
     /* Prevent page break inside the bill */
     @media print {
 
       body,
-      #bill {
+      #bill,
+      #bill-pdf-export {
         margin: 0;
-        box-shadow: none;
-        width: 210mm;
+        box-shadow: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        width: 210mm !important;
         height: 297mm;
         page-break-after: avoid;
       }
+    }
+
+    /* PDF Export Styling - ensures PDF is always crisp rectangular A4 without screen preview curves or shadow */
+    #bill-pdf-export {
+      box-sizing: border-box !important;
+      border-radius: 0 !important;
+      border: none !important;
+      box-shadow: none !important;
+      outline: none !important;
+      margin: 0 auto !important;
+      padding: 0 !important;
+      width: 210mm !important;
+      max-width: 210mm !important;
+      min-width: 210mm !important;
+      height: 296mm !important;
+      max-height: 296mm !important;
+      min-height: 296mm !important;
+      overflow: hidden !important;
+      position: relative !important;
+      background: #ffffff !important;
+      font-size: 13px !important;
+      color: #000000 !important;
+      transform: none !important;
+    }
+
+    #bill-pdf-body {
+      box-sizing: border-box !important;
+      width: 210mm !important;
+      padding: 0 15.5mm 0 13.5mm !important;
+    }
+
+    #bill-pdf-export.header-hidden #bill-pdf-body {
+      padding: 28mm 15.5mm 0 13.5mm !important;
+    }
+
+    #bill-pdf-export .table-hover-wrapper {
+      width: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    #bill-pdf-export #header-container {
+      width: 211.2mm !important;
+      max-width: 211.2mm !important;
+      min-width: 211.2mm !important;
+      margin-left: -1.2mm !important;
+      margin-right: -1.2mm !important;
+      margin-top: 3mm !important;
+      margin-bottom: 3mm !important;
+      padding: 0 !important;
+      display: block !important;
+    }
+
+    #bill-pdf-export #header-container img {
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      display: block !important;
+      border-radius: 0 !important;
+    }
+
+    #bill-pdf-export #footer-container {
+      position: absolute !important;
+      bottom: 4mm !important;
+      left: -0.8mm !important;
+      width: 210.8mm !important;
+      max-width: 210.8mm !important;
+      min-width: 210.8mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      display: block !important;
+    }
+
+    #bill-pdf-export #footer-container img {
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      display: block !important;
+      border-radius: 0 !important;
     }
 
     /* Responsive for smaller screens */
@@ -758,22 +1491,41 @@
         padding: 1rem;
         font-size: 12px;
       }
+
+      #header-container {
+        width: calc(100% + 2rem);
+        margin-top: -0.75rem;
+        margin-left: -1rem;
+        margin-right: -1rem;
+        margin-bottom: 0.75rem;
+      }
+
+      #footer-container {
+        width: calc(100% + 2rem);
+        margin-left: -1rem;
+        margin-right: -1rem;
+        margin-bottom: -0.75rem;
+        margin-top: 2rem;
+      }
     }
 
-    /* Side Navigation Styles */
+    /* Side Navigation Styles with smooth curves */
     .side-nav {
       position: fixed;
-      left: -300px;
+      left: -360px;
       top: 0;
-      width: 300px;
+      width: 340px;
       height: 100vh;
-      background: white;
-      box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
-      transition: left 0.3s ease;
+      background: #ffffff;
+      box-shadow: 10px 0 35px -5px rgba(15, 23, 42, 0.12);
+      transition: left 0.35s cubic-bezier(0.16, 1, 0.3, 1);
       z-index: 1000;
-      padding: 1rem;
+      padding: 1.25rem 1rem 1rem 1rem;
       display: flex;
       flex-direction: column;
+      border-right: 1px solid #e2e8f0;
+      border-top-right-radius: 1.75rem;
+      border-bottom-right-radius: 1.75rem;
     }
 
     .side-nav.open {
@@ -781,64 +1533,370 @@
     }
 
     .saved-bills-list {
-      margin-top: 1rem;
       overflow-y: auto;
+      overflow-x: hidden;
       flex: 1;
+      padding: 0.25rem 0.5rem 0.5rem 0.25rem;
+      scrollbar-gutter: stable;
+      box-sizing: border-box;
     }
 
-    .saved-bill-item {
-      padding: 0.5rem;
-      border-bottom: 1px solid #eee;
-      cursor: pointer;
+    .saved-bills-list::-webkit-scrollbar {
+      width: 5px;
     }
 
-    .saved-bill-item:hover {
-      background: #f5f5f5;
+    .saved-bills-list::-webkit-scrollbar-track {
+      background: transparent;
+      margin: 4px 0;
     }
 
-    /* Active saved bill highlight */
-    .saved-bill-item.active {
-      background: #eff6ff;
-      /* blue-50 */
-      border-left: 4px solid #60a5fa;
-      /* blue-400 */
+    .saved-bills-list::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 6px;
+    }
+
+    .saved-bills-list::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+
+    /* Saved bill card styles */
+    .saved-bill-card {
+      transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+      box-sizing: border-box;
+      position: relative;
+    }
+
+    .saved-bill-card:hover {
+      transform: translateY(-1px);
+    }
+
+    .saved-bill-card.active {
+      background: #eff6ff !important;
+      border-color: #3b82f6 !important;
+      box-shadow: inset 0 0 0 1.5px #3b82f6, 0 1px 4px rgba(37, 99, 235, 0.12) !important;
+    }
+
+    .saved-bill-card.active .bill-icon-box {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+      color: white !important;
+      box-shadow: 0 2px 5px rgba(37, 99, 235, 0.3) !important;
+    }
+
+    .saved-bill-card.active .active-indicator-tag {
+      display: inline-flex !important;
     }
 
     .main-content {
-      transition: margin-left 0.3s ease;
+      transition: margin-left 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    .main-content.shifted {
-      margin-left: 300px;
+    /* ========================================================
+       Rock-Solid Apple/iOS Modern Switch Controls
+       ======================================================== */
+    .modern-switch {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .modern-switch input[type="checkbox"] {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+
+    .modern-switch-track {
+      width: 40px;
+      height: 22px;
+      background-color: #e2e8f0;
+      border-radius: 9999px;
+      transition: background-color 0.25s ease, box-shadow 0.25s ease;
+      position: relative;
+      display: inline-block;
+      box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.12);
+      flex-shrink: 0;
+    }
+
+    .modern-switch-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      background-color: #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.25);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .modern-switch input[type="checkbox"]:checked+.modern-switch-track {
+      background-color: #2563eb;
+    }
+
+    .modern-switch.switch-indigo input[type="checkbox"]:checked+.modern-switch-track {
+      background-color: #4f46e5;
+    }
+
+    .modern-switch.switch-emerald input[type="checkbox"]:checked+.modern-switch-track {
+      background-color: #059669;
+    }
+
+    .modern-switch input[type="checkbox"]:checked+.modern-switch-track .modern-switch-thumb {
+      transform: translateX(18px);
+    }
+
+    /* Desktop Switches Strip: Strict preservation of pristine desktop design */
+    @media (min-width: 640px) {
+      #switchesContainer {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        gap: 0.375rem !important;
+        background-color: #f8fafc !important;
+        padding: 0.375rem !important;
+        border-radius: 1rem !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+        width: auto !important;
+      }
+
+      #switchesContainer .modern-switch {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        gap: 0.625rem !important;
+        width: auto !important;
+        padding: 0.375rem 0.75rem !important;
+        border-radius: 0.75rem !important;
+        background-color: transparent !important;
+        border: 1px solid transparent !important;
+        box-shadow: none !important;
+        cursor: pointer !important;
+        transition: all 0.15s ease !important;
+      }
+
+      #switchesContainer .modern-switch:hover {
+        background-color: #ffffff !important;
+        border-color: #e2e8f0 !important;
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+      }
+
+      #switchesContainer .modern-switch .switch-toggle-wrap {
+        order: 1 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        flex-shrink: 0 !important;
+      }
+
+      #switchesContainer .modern-switch .switch-label-wrap {
+        order: 2 !important;
+        display: inline-flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        gap: 0.375rem !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+      }
+
+      #switchesContainer .switch-desktop-divider {
+        display: block !important;
+        width: 1px !important;
+        height: 1.25rem !important;
+        background-color: #e2e8f0 !important;
+        flex-shrink: 0 !important;
+      }
+    }
+
+    /* Mobile Switches (Below 640px): 1 single horizontal row with non-truncated labels */
+    @media (max-width: 639px) {
+      .modern-switch-track {
+        width: 30px !important;
+        height: 17px !important;
+      }
+
+      .modern-switch-thumb {
+        width: 13px !important;
+        height: 13px !important;
+        top: 2px !important;
+        left: 2px !important;
+      }
+
+      .modern-switch input[type="checkbox"]:checked+.modern-switch-track .modern-switch-thumb {
+        transform: translateX(13px) !important;
+      }
+
+      #switchesContainer {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 0.25rem !important;
+        width: 100% !important;
+        background-color: rgba(248, 250, 252, 0.95) !important;
+        padding: 0.375rem !important;
+        border-radius: 1rem !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+      }
+
+      #switchesContainer .modern-switch {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 0.25rem !important;
+        padding: 0.375rem 0.5rem !important;
+        border-radius: 0.75rem !important;
+        background-color: #ffffff !important;
+        border: 1px solid rgba(226, 232, 240, 0.9) !important;
+        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+      }
+
+      #switchesContainer .modern-switch.switch-item-gst {
+        flex: 0 0 auto !important;
+      }
+
+      #switchesContainer .modern-switch.switch-item-letterhead {
+        flex: 1 1 0% !important;
+      }
+
+      #switchesContainer .modern-switch.switch-item-signature {
+        flex: 1 1 0% !important;
+      }
+
+      #switchesContainer .modern-switch .switch-label-wrap {
+        order: 1 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 0.25rem !important;
+        white-space: nowrap !important;
+      }
+
+      #switchesContainer .modern-switch .switch-toggle-wrap {
+        order: 2 !important;
+        display: flex !important;
+        align-items: center !important;
+        flex-shrink: 0 !important;
+      }
+
+      #switchesContainer .switch-desktop-divider {
+        display: none !important;
+      }
+    }
+
+    @keyframes modernShake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-6px); }
+      40%, 80% { transform: translateX(6px); }
+    }
+    .animate-shake {
+      animation: modernShake 0.35s ease-in-out;
+    }
+
+    /* PIN Success / Error Glow Styles */
+    .pin-input.pin-error {
+      border-color: #ef4444 !important;
+      background-color: #fef2f2 !important;
+      color: #dc2626 !important;
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.25) !important;
+    }
+    .pin-input.pin-success {
+      border-color: #10b981 !important;
+      background-color: #ecfdf5 !important;
+      color: #047857 !important;
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.3) !important;
+    }
+
+    /* Modern Card Zoom-in & Dissolve Transition on Login Success */
+    .login-card-zoom-open {
+      transform: scale(1.12) !important;
+      opacity: 0 !important;
+      filter: blur(8px) !important;
+      transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.35s ease-out, filter 0.35s ease-out !important;
+    }
+    .login-container-fade-out {
+      opacity: 0 !important;
+      transition: opacity 0.35s ease-out !important;
     }
   </style>
 </head>
 
 <body>
-  <div id="loginContainer" class="fixed inset-0 bg-gray-100 flex items-center justify-center z-[2000]">
-    <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-sm">
-      <div class="flex justify-center mb-3">
-        <img src="assets/favicon.jpg" alt="Logo" class="w-16 h-16 rounded-full object-cover shadow" />
+  <!-- Modern PIN Login Screen -->
+  <div id="loginContainer" class="fixed inset-0 bg-gradient-to-br from-slate-100 via-blue-50/50 to-slate-200/90 flex items-center justify-center z-[2000] p-4 select-none">
+    
+    <!-- Ambient Backdrop Glow Circles -->
+    <div class="absolute w-80 sm:w-96 h-80 sm:h-96 -top-20 -left-20 bg-blue-400/20 rounded-full blur-3xl pointer-events-none"></div>
+    <div class="absolute w-80 sm:w-96 h-80 sm:h-96 -bottom-20 -right-20 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none"></div>
+    
+    <!-- Modern Frosted Glass Card Container -->
+    <div id="loginCard" class="relative bg-white/95 backdrop-blur-xl border border-slate-200/80 shadow-2xl rounded-3xl p-6 sm:p-8 w-full max-w-sm transition-all duration-300">
+      
+      <!-- Top Accent Line -->
+      <div class="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-gradient-to-r from-transparent via-blue-600 to-transparent rounded-full opacity-90"></div>
+
+      <!-- Brand Logo with Squircle Ring & Security Badge -->
+      <div class="flex justify-center mb-3.5">
+        <div class="relative group">
+          <div class="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl bg-white p-1.5 shadow-md border border-slate-200/80 ring-4 ring-blue-500/10 flex items-center justify-center transition-transform duration-300 group-hover:scale-105">
+            <img src="assets/favicon.jpg" alt="Darshan Enterprises Logo" class="w-full h-full rounded-xl object-cover" />
+          </div>
+          <!-- Shield Badge -->
+          <div id="loginShieldBadge" class="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs border-2 border-white transition-all duration-200">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
       </div>
-      <h2 class="text-2xl font-bold mb-2 text-center text-gray-800">Bill Generator Login</h2>
-      <p class="text-center text-sm text-gray-600 mb-4">Enter 4-digit PIN</p>
-      <div id="loginError" class="hidden bg-red-100 text-red-700 p-2 rounded mb-4 text-sm">
-        Invalid PIN
+
+      <!-- Header Typography -->
+      <div class="text-center mb-5">
+        <span class="inline-block text-[10px] font-extrabold uppercase tracking-widest text-blue-600 bg-blue-50 border border-blue-200/60 px-2.5 py-0.5 rounded-full mb-1.5">
+          Darshan Enterprises
+        </span>
+        <h2 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight leading-snug">
+          Enter Security PIN
+        </h2>
+        <p class="text-xs text-slate-500 font-medium mt-1">
+          Access restricted to authorized personnel
+        </p>
       </div>
-      <div class="mb-6 flex justify-center gap-3">
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
-          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
-          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
-          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
-        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
-          class="pin-input w-12 h-12 text-center text-xl border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500" />
+
+      <!-- Error Message Banner -->
+      <div id="loginError" class="hidden items-center justify-center gap-2 bg-red-50 text-red-600 border border-red-200 px-3 py-2 rounded-xl text-xs font-semibold mb-4 transition-all animate-shake">
+        <i data-lucide="alert-circle" class="w-4 h-4 shrink-0 text-red-500"></i>
+        <span>Invalid PIN. Please try again.</span>
       </div>
-      <button id="loginButton"
-        class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-        Login
+
+      <!-- 4 PIN Input Boxes with Modern Focus Effects -->
+      <div class="mb-5 flex justify-center items-center gap-2.5 sm:gap-3">
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-13 sm:w-13 sm:h-14 text-center text-2xl font-bold text-slate-900 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border-2 border-slate-200 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/15 rounded-2xl shadow-2xs focus:shadow-xs transition-all duration-150 outline-none caret-blue-600" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-13 sm:w-13 sm:h-14 text-center text-2xl font-bold text-slate-900 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border-2 border-slate-200 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/15 rounded-2xl shadow-2xs focus:shadow-xs transition-all duration-150 outline-none caret-blue-600" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-13 sm:w-13 sm:h-14 text-center text-2xl font-bold text-slate-900 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border-2 border-slate-200 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/15 rounded-2xl shadow-2xs focus:shadow-xs transition-all duration-150 outline-none caret-blue-600" />
+        <input type="password" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+          class="pin-input w-12 h-13 sm:w-13 sm:h-14 text-center text-2xl font-bold text-slate-900 bg-slate-50 hover:bg-slate-100/70 focus:bg-white border-2 border-slate-200 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/15 rounded-2xl shadow-2xs focus:shadow-xs transition-all duration-150 outline-none caret-blue-600" />
+      </div>
+
+      <!-- Action Button -->
+      <button id="loginButton" type="button"
+        class="group w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 text-white font-semibold text-sm shadow-sm hover:shadow transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer">
+        <i data-lucide="lock" class="w-4 h-4 transition-transform group-hover:scale-110"></i>
+        <span>Unlock Workspace</span>
+        <i data-lucide="arrow-right" class="w-4 h-4 transition-transform group-hover:translate-x-0.5"></i>
       </button>
+
+      <!-- Security Trust Footer -->
+      <div class="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-center gap-1.5 text-[11px] text-slate-400 font-medium">
+        <i data-lucide="shield" class="w-3.5 h-3.5 text-slate-400"></i>
+        <span>Secure offline session • PIN protected</span>
+      </div>
+
     </div>
   </div>
 
@@ -883,29 +1941,255 @@
       </button>
     </div>
   </div>
+  <!-- Custom Prompt Modal (replaces browser prompt) -->
+  <div id="appPromptModal"
+    class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-[2600] p-4">
+    <div class="bg-white rounded-2xl p-6 shadow-2xl w-full max-w-sm transform transition-all border border-slate-100">
+      <div class="flex items-center gap-3 mb-4">
+        <div id="appPromptIconBox"
+          class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+          <i data-lucide="bookmark" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 id="appPromptTitle" class="text-base font-bold text-gray-900">Enter Name</h3>
+          <p id="appPromptSubtitle" class="text-xs text-gray-500">Provide a name to continue</p>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label id="appPromptInputLabel" for="appPromptInput"
+          class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">Bill Name</label>
+        <input type="text" id="appPromptInput"
+          class="w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition bg-gray-50 focus:bg-white"
+          placeholder="Enter name..." autocomplete="off" />
+      </div>
+
+      <div class="flex gap-2">
+        <button id="appPromptCancelBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition cursor-pointer">
+          Cancel
+        </button>
+        <button id="appPromptConfirmBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm hover:shadow transition cursor-pointer flex items-center justify-center gap-1.5">
+          <i data-lucide="check" class="w-3.5 h-3.5"></i>
+          <span id="appPromptConfirmText">Save</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Confirm Modal (replaces browser confirm) -->
+  <div id="appConfirmModal"
+    class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-[2600] p-4">
+    <div class="bg-white rounded-2xl p-6 shadow-2xl w-full max-w-sm transform transition-all border border-slate-100">
+      <div class="flex items-center gap-3 mb-3">
+        <div id="appConfirmIconBox"
+          class="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shrink-0">
+          <i id="appConfirmIcon" data-lucide="alert-triangle" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 id="appConfirmTitle" class="text-base font-bold text-gray-900">Are you sure?</h3>
+          <p id="appConfirmSubtitle" class="text-xs text-gray-500">Please confirm this action</p>
+        </div>
+      </div>
+
+      <p id="appConfirmMessage" class="text-xs text-gray-600 mb-5 leading-relaxed">This action cannot be undone.</p>
+
+      <div class="flex gap-2">
+        <button id="appConfirmCancelBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition cursor-pointer">
+          Cancel
+        </button>
+        <button id="appConfirmOkBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-sm hover:shadow transition cursor-pointer flex items-center justify-center gap-1.5">
+          <span id="appConfirmOkText">Confirm</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Unsaved Changes Modal -->
+  <div id="appUnsavedModal"
+    class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-[2600] p-4">
+    <div class="bg-white rounded-2xl p-6 shadow-2xl w-full max-w-sm transform transition-all border border-slate-100">
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+          <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 id="appUnsavedTitle" class="text-base font-bold text-gray-900">Unsaved Changes</h3>
+          <p id="appUnsavedSubtitle" class="text-xs text-gray-500">You have changes on this bill</p>
+        </div>
+      </div>
+
+      <p id="appUnsavedMessage" class="text-xs text-gray-600 mb-5 leading-relaxed">
+        Do you want to save your current bill before proceeding?
+      </p>
+
+      <div class="flex flex-col gap-2">
+        <button id="appUnsavedSaveBtn" type="button"
+          class="w-full py-2.5 px-4 text-xs font-semibold text-white bg-green-600 hover:bg-green-700 rounded-xl shadow-sm hover:shadow transition cursor-pointer flex items-center justify-center gap-1.5">
+          <i data-lucide="save" class="w-3.5 h-3.5"></i>
+          <span>Save Changes</span>
+        </button>
+        <div class="flex gap-2">
+          <button id="appUnsavedCancelBtn" type="button"
+            class="flex-1 py-2 px-3 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition cursor-pointer">
+            Cancel
+          </button>
+          <button id="appUnsavedDiscardBtn" type="button"
+            class="flex-1 py-2 px-3 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition cursor-pointer">
+            Discard &amp; Proceed
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Side Navigation Overlay -->
+  <div id="sideNavOverlay"
+    class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[999] opacity-0 pointer-events-none transition-opacity duration-300">
+  </div>
+
+  <!-- Duplicate Bill Modal -->
+  <div id="duplicateModal"
+    class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-[2500] p-4">
+    <div class="bg-white rounded-2xl p-6 shadow-2xl w-full max-w-sm transform transition-all border border-slate-100">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+          <i data-lucide="copy" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-gray-900">Duplicate Bill</h3>
+          <p class="text-xs text-gray-500">Create an exact copy of this bill</p>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label for="duplicateBillNameInput"
+          class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">New Bill Name</label>
+        <input type="text" id="duplicateBillNameInput"
+          class="w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition bg-gray-50 focus:bg-white"
+          placeholder="Enter duplicate bill name..." autocomplete="off" />
+      </div>
+
+      <div class="flex gap-2">
+        <button id="cancelDuplicateBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition cursor-pointer">
+          Cancel
+        </button>
+        <button id="confirmDuplicateBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm hover:shadow transition cursor-pointer flex items-center justify-center gap-1.5">
+          <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+          <span>Duplicate</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename Bill Modal -->
+  <div id="renameModal"
+    class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-[2500] p-4">
+    <div class="bg-white rounded-2xl p-6 shadow-2xl w-full max-w-sm transform transition-all border border-slate-100">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+          <i data-lucide="edit-3" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-gray-900">Rename Bill</h3>
+          <p class="text-xs text-gray-500">Enter a new name for this bill</p>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label for="renameBillNameInput"
+          class="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1.5">Bill Name</label>
+        <input type="text" id="renameBillNameInput"
+          class="w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition bg-gray-50 focus:bg-white"
+          placeholder="Enter bill name..." autocomplete="off" />
+      </div>
+
+      <div class="flex gap-2">
+        <button id="cancelRenameBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition cursor-pointer">
+          Cancel
+        </button>
+        <button id="confirmRenameBtn" type="button"
+          class="flex-1 py-2.5 px-4 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm hover:shadow transition cursor-pointer flex items-center justify-center gap-1.5">
+          <i data-lucide="check" class="w-3.5 h-3.5"></i>
+          <span>Save Name</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Side Navigation -->
   <div class="side-nav" id="sideNav">
-    <div class="flex justify-between items-center mb-4">
-      <h2 class="text-xl font-bold">Saved Bills</h2>
-      <button id="closeNav" class="text-gray-500 hover:text-gray-700" title="Close navigation">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
+    <!-- Header -->
+    <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+      <div class="flex items-center gap-2.5 shrink-0">
+        <div
+          class="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center shadow-sm">
+          <i data-lucide="folder-open" class="w-4 h-4"></i>
+        </div>
+        <div>
+          <h2 class="text-sm font-bold text-gray-900 leading-tight">Saved Bills</h2>
+          <span id="savedBillsCount" class="text-[11px] text-gray-500 font-medium">0 bills</span>
+        </div>
+      </div>
+
+
+      <button id="closeNav"
+        class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition cursor-pointer shrink-0"
+        title="Close sidebar">
+        <i data-lucide="x" class="w-4 h-4"></i>
       </button>
     </div>
-    <div class="saved-bills-list" id="savedBillsList">
-      <!-- Saved bills will be listed here -->
+
+    <!-- Top Action: New Bill -->
+    <div class="mt-3">
+      <button id="newBillSidebarBtn"
+        class="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-2 px-3.5 rounded-xl font-medium shadow-sm hover:shadow transition duration-200 text-xs cursor-pointer">
+        <i data-lucide="plus-circle" class="w-4 h-4"></i>
+        <span>Create New Bill</span>
+      </button>
     </div>
-    <div class="mt-8 pt-4 border-t border-gray-200">
-      <h3 class="text-lg font-bold mb-4">Account</h3>
+
+    <!-- Search Input -->
+    <div class="mt-2.5 relative">
+      <i data-lucide="search"
+        class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"></i>
+      <input type="text" id="billSearchInput" placeholder="Search bills by name..."
+        class="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 hover:bg-gray-100/80 focus:bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition" />
+    </div>
+
+    <!-- Saved Bills List -->
+    <div class="saved-bills-list mt-3 space-y-1.5" id="savedBillsList">
+      <!-- Saved bill cards rendered here -->
+    </div>
+
+    <!-- Empty Search State -->
+    <div id="emptySearchState" class="hidden flex-col items-center justify-center py-8 text-center text-gray-400">
+      <i data-lucide="search-x" class="w-8 h-8 mb-2 text-gray-300"></i>
+      <p class="text-xs font-medium text-gray-500">No matching bills found</p>
+      <p class="text-[11px] text-gray-400">Try a different search keyword</p>
+    </div>
+
+    <!-- Account Footer -->
+    <div class="pt-3 mt-auto border-t border-gray-100 space-y-1">
+      <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 px-2 mb-1">Account</div>
       <button id="changeCredentialsBtn"
-        class="w-full text-left py-2 px-2 rounded-md hover:bg-gray-100 transition flex items-center gap-2">
-        <i data-lucide="key" class="w-4 h-4"></i>
-        <span>Change Credentials</span>
+        class="w-full text-left py-1.5 px-2.5 rounded-xl hover:bg-gray-100 text-gray-700 text-xs font-medium transition flex items-center gap-2 cursor-pointer">
+        <div class="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-gray-500">
+          <i data-lucide="key" class="w-3.5 h-3.5"></i>
+        </div>
+        <span>Change PIN</span>
       </button>
       <button id="logoutBtn"
-        class="w-full text-left py-2 px-2 rounded-md hover:bg-red-50 transition flex items-center gap-2 text-red-600 hover:text-red-700">
-        <i data-lucide="log-out" class="w-4 h-4"></i>
+        class="w-full text-left py-1.5 px-2.5 rounded-xl hover:bg-red-50 text-red-600 text-xs font-medium transition flex items-center gap-2 cursor-pointer">
+        <div class="w-6 h-6 rounded-md bg-red-50 flex items-center justify-center text-red-500">
+          <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+        </div>
         <span>Logout</span>
       </button>
     </div>
@@ -915,56 +2199,243 @@
 
 
   <div class="main-content" id="mainContent">
-    <div class="flex justify-between items-center mb-4">
-      <button id="toggleNav" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition"
-        title="Toggle navigation">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
-      <div class="flex gap-2">
-        <button id="saveBtn" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Save
-          Bill</button>
-        <button id="downloadBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Download
-          PDF</button>
-      </div>
-    </div>
+    <!-- Sleek Top Action Toolbar (Two Separate Sleek Cards on Mobile, One Integrated Bar on Desktop) -->
+    <!-- Sleek Top Action Toolbar (Two Separate Sleek Cards on Mobile, One Integrated Bar on Desktop) -->
+    <header
+      class="no-print relative sm:sticky sm:top-3 z-40 bg-transparent sm:bg-white/95 sm:backdrop-blur-md sm:rounded-2xl border-0 sm:border sm:border-gray-200/80 shadow-none sm:shadow-sm mb-3 sm:mb-4 p-0 sm:p-3.5 transition-all">
+      <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 sm:gap-3">
 
-    <div class="my-2 flex justify-end">
-      <label
-        class="cursor-pointer bg-blue-600 text-white px-3 py-1 rounded shadow hover:bg-blue-700 transition duration-200">
-        Upload Custom Header
-        <input type="file" id="uploadHeader" accept="image/*" hidden />
-      </label>
-    </div>
+        <!-- Top Row (Mobile): Separate Sidebar Button Card + Separate Centered Brand Header Card (FIXED ONLY on Mobile) | Desktop: Left Brand Item -->
+        <div class="fixed top-2 left-4 right-4 z-40 flex items-center gap-2 sm:static sm:inset-auto sm:w-auto">
+          <!-- Mobile Sidebar Toggle Button: Separate Independent Card Button on mobile -->
+          <button id="mobileSideNavBtn" type="button"
+            class="sm:hidden w-11 h-11 rounded-2xl bg-white/95 backdrop-blur-md hover:bg-blue-50 text-slate-700 hover:text-blue-600 flex items-center justify-center border border-slate-200/80 transition cursor-pointer shrink-0 shadow-xs active:scale-95"
+            title="Toggle Saved Bills Sidebar">
+            <i data-lucide="panel-left" class="w-5 h-5"></i>
+          </button>
 
-    <div class="my-2 flex justify-end gap-4">
-      <div class="flex items-center">
-        <label class="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" id="includeGST" class="sr-only peer" checked />
-          <div
-            class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600">
+          <!-- Brand Logo Button: Separate Centered & Enlarged Header Card on Mobile, Standard Flex on Desktop -->
+          <button id="toggleNav"
+            class="group relative flex items-center justify-start gap-2.5 sm:gap-3 py-2 px-3 sm:p-1.5 sm:pr-3.5 rounded-2xl bg-white/95 sm:bg-slate-50/80 sm:hover:bg-blue-50/60 border border-slate-200/80 sm:hover:border-blue-200 shadow-xs sm:shadow-2xs sm:hover:shadow-xs transition-all duration-200 cursor-pointer text-left select-none flex-1 sm:flex-initial min-w-0"
+            title="Saved bills sidebar">
+            <!-- Logo with Smooth Hover Overlay (Enlarged on mobile) -->
+            <div
+              class="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden shadow-xs border border-slate-200/70 shrink-0 bg-white">
+              <img src="assets/favicon.jpg" alt="Darshan Enterprises Logo"
+                class="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
+              <!-- Hover Overlay with Sidebar Icon (Desktop only) -->
+              <div
+                class="hidden sm:flex absolute inset-0 bg-blue-600/85 backdrop-blur-[1px] text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200 items-center justify-center">
+                <i data-lucide="panel-left-open"
+                  class="w-4 h-4 transition-transform duration-200 group-hover:scale-110"></i>
+              </div>
+            </div>
+
+            <!-- Branding & Status Badge (Enlarged & Prominent on mobile) -->
+            <div class="text-left min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                <h2
+                  class="text-xs sm:text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors leading-tight shrink-0">
+                  DARSHAN ENTERPRISES</h2>
+
+                <!-- Mobile Separator & Active File Name Pill (Mobile only: Left DARSHAN ENTERPRISES | Right File Name) -->
+                <div id="mobileDocTitleWrap" class="flex sm:hidden items-center gap-1.5 min-w-0 flex-1">
+                  <span class="text-slate-300 font-light select-none text-xs">|</span>
+                  <span id="mobileDocTitleDisplay" role="button" tabindex="0" title="Tap to rename bill"
+                    class="inline-flex items-center gap-1 min-w-0 max-w-full px-1.5 py-0.5 rounded-lg bg-blue-50/80 active:bg-blue-100 border border-blue-200/60 text-[9.5px] font-semibold text-blue-700 transition cursor-pointer">
+                    <i data-lucide="file-text" class="w-3 h-3 shrink-0 text-blue-600"></i>
+                    <span id="mobileHeaderDocTitleText" class="line-clamp-2 break-words leading-tight">Untitled Bill</span>
+                    <i data-lucide="pencil" class="w-2.5 h-2.5 shrink-0 text-blue-400 opacity-70"></i>
+                  </span>
+                </div>
+
+                <span id="billStatusBadge"
+                  class="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200/80">
+                  <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  <span id="billStatusBadgeText">New Bill</span>
+                </span>
+              </div>
+              <div class="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
+                <span>Tax Invoice Generator</span>
+                <span class="hidden sm:inline text-slate-300">•</span>
+                <span
+                  class="hidden sm:inline-flex text-[10px] font-semibold text-blue-500 group-hover:underline items-center gap-0.5">
+                  <i data-lucide="panel-left" class="w-3 h-3 inline"></i>
+                  <span>Toggle Sidebar</span>
+                </span>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <!-- Middle: Modern File / Document Name Pill (Occupies desktop empty space) -->
+        <div id="headerDocTitleContainer"
+          class="hidden xl:flex items-center justify-center flex-1 min-w-[240px] max-w-sm lg:max-w-md mx-3 select-none">
+
+          <!-- View / Display Mode -->
+          <div id="headerDocTitleDisplay"
+            role="button"
+            tabindex="0"
+            title="Click to rename file"
+            class="group w-full flex items-center gap-2.5 px-3 py-1.5 rounded-2xl bg-slate-50/80 hover:bg-blue-50/60 border border-slate-200/80 hover:border-blue-200 shadow-2xs hover:shadow-xs transition-all duration-200 cursor-pointer text-left">
+            
+            <!-- Document Icon Badge -->
+            <div
+              class="w-8 h-8 rounded-xl bg-white border border-slate-200/70 text-blue-600 flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 group-hover:border-blue-200 group-hover:bg-blue-50/50 transition-all duration-200">
+              <i data-lucide="file-text" class="w-4 h-4 text-blue-600"></i>
+            </div>
+
+            <!-- Title & Subtitle Info -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-1.5 leading-none mb-0.5">
+                <span class="text-[9px] font-bold uppercase tracking-wider text-slate-600">File Name</span>
+                <span class="inline-block w-1 h-1 rounded-full bg-slate-300"></span>
+                <span class="text-[9px] font-medium text-slate-500 group-hover:text-blue-500 transition-colors">Tap to rename</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span id="headerDocTitleText"
+                  class="text-xs font-bold text-slate-800 group-hover:text-blue-600 overflow-hidden text-ellipsis whitespace-nowrap transition-colors">
+                  Untitled Bill
+                </span>
+              </div>
+            </div>
+
+            <!-- Edit Pencil Pill Icon -->
+            <div
+              class="w-6 h-6 rounded-lg flex items-center justify-center text-slate-600 group-hover:text-blue-600 group-hover:bg-white/80 shrink-0 transition-all">
+              <i data-lucide="pencil" class="w-3 h-3"></i>
+            </div>
           </div>
-          <span class="ml-3 text-sm font-medium text-gray-700" id="gstToggleLabel">Include GST</span>
-        </label>
+
+          <!-- Edit Mode (Inline on Tap) -->
+          <div id="headerDocTitleEditWrap"
+            class="hidden w-full items-center gap-1.5 px-2 py-1 rounded-2xl bg-white border-2 border-blue-500 shadow-sm transition-all">
+            <div class="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+              <i data-lucide="file-edit" class="w-3.5 h-3.5"></i>
+            </div>
+            <input id="headerDocTitleInput" type="text"
+              class="flex-1 min-w-0 text-xs font-semibold text-slate-800 bg-transparent border-0 focus:outline-none focus:ring-0 px-1 py-1"
+              placeholder="Enter file name..." maxlength="60" autocomplete="off" spellcheck="false" />
+            
+            <!-- Save Button -->
+            <button id="headerDocTitleSaveBtn" type="button" title="Save name (Enter)"
+              class="inline-flex items-center justify-center w-7 h-7 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xs transition duration-150 active:scale-95 cursor-pointer shrink-0">
+              <i data-lucide="check" class="w-3.5 h-3.5"></i>
+            </button>
+            
+            <!-- Cancel Button -->
+            <button id="headerDocTitleCancelBtn" type="button" title="Cancel (Esc)"
+              class="inline-flex items-center justify-center w-7 h-7 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 transition duration-150 active:scale-95 cursor-pointer shrink-0">
+              <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+        </div>
+
+        <!-- Bottom Card (Mobile): Switches Strip + Action Buttons Group (NOT Fixed on Mobile, Scrolls with Page) | Desktop: Right Controls Item -->
+        <div
+          class="mt-[4.25rem] sm:mt-0 flex flex-col sm:flex-row xl:items-center justify-start xl:justify-end gap-2 sm:gap-2.5 w-full xl:w-auto bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/80 shadow-xs p-2.5 sm:bg-transparent sm:border-0 sm:shadow-none sm:p-0">
+
+          <!-- Switches Strip: Pristine Desktop Design (media_1792420472222) + 1-Row Non-Truncated Mobile Design -->
+          <div id="switchesContainer">
+
+            <!-- Include GST Switch -->
+            <label for="includeGST"
+              class="modern-switch switch-item-gst group text-slate-700 cursor-pointer select-none">
+              <div class="switch-toggle-wrap flex items-center shrink-0">
+                <input type="checkbox" id="includeGST" checked />
+                <span class="modern-switch-track">
+                  <span class="modern-switch-thumb"></span>
+                </span>
+              </div>
+              <div class="switch-label-wrap flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                <i data-lucide="percent" class="w-3.5 h-3.5 text-blue-600 transition shrink-0"></i>
+                <span id="gstToggleLabel"
+                  class="text-[11px] sm:text-xs font-semibold text-slate-800 sm:text-slate-700 whitespace-nowrap">Include
+                  GST</span>
+              </div>
+            </label>
+
+            <span class="switch-desktop-divider"></span>
+
+            <!-- Hide Letterhead Switch -->
+            <label for="hideHeader"
+              class="modern-switch switch-indigo switch-item-letterhead group text-slate-700 cursor-pointer select-none">
+              <div class="switch-toggle-wrap flex items-center shrink-0">
+                <input type="checkbox" id="hideHeader" />
+                <span class="modern-switch-track">
+                  <span class="modern-switch-thumb"></span>
+                </span>
+              </div>
+              <div class="switch-label-wrap flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                <i data-lucide="eye-off" class="w-3.5 h-3.5 text-indigo-600 transition shrink-0"></i>
+                <span
+                  class="text-[11px] sm:text-xs font-semibold text-slate-800 sm:text-slate-700 whitespace-nowrap"><span
+                    class="hidden sm:inline">Hide </span>Letterhead</span>
+              </div>
+            </label>
+
+            <span class="switch-desktop-divider"></span>
+
+            <!-- Digital Signature Switch -->
+            <label for="includeSignatureTop"
+              class="modern-switch switch-emerald switch-item-signature group text-slate-700 cursor-pointer select-none">
+              <div class="switch-toggle-wrap flex items-center shrink-0">
+                <input type="checkbox" id="includeSignatureTop" checked />
+                <span class="modern-switch-track">
+                  <span class="modern-switch-thumb"></span>
+                </span>
+              </div>
+              <div class="switch-label-wrap flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                <i data-lucide="pen-tool" class="w-3.5 h-3.5 text-emerald-600 transition shrink-0"></i>
+                <span
+                  class="text-[11px] sm:text-xs font-semibold text-slate-800 sm:text-slate-700 whitespace-nowrap"><span
+                    class="hidden sm:inline">Digital </span>Signature</span>
+              </div>
+            </label>
+          </div>
+
+          <!-- Distinct Action Buttons Group (2 Columns on Mobile, Inline on Desktop) -->
+          <div class="grid grid-cols-2 gap-2 sm:flex sm:items-center sm:gap-2 w-full sm:w-auto">
+            <!-- Upload Custom Header Button (1st button on desktop, 2nd row on mobile) -->
+            <label
+              class="order-3 col-span-2 sm:order-1 sm:col-span-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200/90 rounded-xl shadow-2xs hover:shadow-xs transition duration-150 cursor-pointer select-none text-center"
+              title="Upload custom header image for letterhead">
+              <i data-lucide="image-up" class="w-4 h-4 sm:w-3.5 sm:h-3.5 text-blue-600 shrink-0"></i>
+              <span class="text-xs leading-tight whitespace-nowrap"><span class="hidden sm:inline">Upload
+                </span>Header</span>
+              <input type="file" id="uploadHeader" accept="image/*" hidden />
+            </label>
+
+            <!-- Save Bill Button (2nd button on desktop, Col 1 on mobile) -->
+            <button id="saveBtn"
+              class="order-1 sm:order-2 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 rounded-xl shadow-xs hover:shadow transition duration-150 cursor-pointer text-center">
+              <i data-lucide="save" class="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0"></i>
+              <span class="btn-text text-xs leading-tight whitespace-nowrap">Save Bill</span>
+            </button>
+
+            <!-- Download PDF Button (3rd button on desktop, Col 2 on mobile) -->
+            <button id="downloadBtn"
+              class="order-2 sm:order-3 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl shadow-xs hover:shadow transition duration-150 cursor-pointer text-center">
+              <i data-lucide="download" class="w-4 h-4 sm:w-3.5 sm:h-3.5 shrink-0"></i>
+              <span class="text-xs leading-tight whitespace-nowrap">Download PDF</span>
+            </button>
+          </div>
+
+        </div>
       </div>
-      <div class="flex items-center">
-        <input type="checkbox" id="hideHeader" class="mr-1" checked />
-        <label for="hideHeader" class="text-sm text-gray-700">Hide Letterhead</label>
-      </div>
-    </div>
+    </header>
 
 
     <div id="bill" contenteditable="false" spellcheck="false" aria-label="Bill Generator">
       <!-- Header Image -->
       <div class="mb-2" id="header-container">
-        <img src="assets/header.png" alt="Company Header Image" class="w-full object-contain"
-          id="company-header-image" />
+        <img src="assets/header.png" alt="Company Header Image" class="w-full block" id="company-header-image" />
       </div>
 
-      <table>
+      <div class="table-hover-wrapper relative">
+        <table>
         <thead>
-          <br /><br />
           <tr>
             <th colspan="7" class="bold text-center py-1 invoice-title" contenteditable="true" spellcheck="false">Tax
               <span class="font-extrabold">INVOICE</span>
@@ -1004,12 +2475,12 @@
             <td colspan="7" class="bold p-1" contenteditable="true" spellcheck="false">Job :-</td>
           </tr>
           <tr class="text-center font-bold" style="font-size: 12px;">
-            <td colspan="1" style="width: 5%;">Sr. No</td>
-            <th style="width: 55%;">Description</th>
-            <th style="width: 12%;">HSN/SAC</th>
+            <th style="width: 5%;">Sr. No</th>
+            <th style="width: 39%;">Description</th>
+            <th style="width: 13%;">HSN/SAC</th>
             <th style="width: 7%;">Qty</th>
             <th style="width: 7%;">Unit</th>
-            <th style="width: 7%;">Rate</th>
+            <th style="width: 14%;">Rate</th>
             <th style="width: 15%;">Amount</th>
           </tr>
           <tr class="text-center item-row">
@@ -1018,7 +2489,7 @@
             <td contenteditable="true" spellcheck="false"></td>
             <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
             <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
-            <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
+            <td class="rate-cell text-right pr-1" contenteditable="true" spellcheck="false"></td>
             <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
           </tr>
         </tbody>
@@ -1028,23 +2499,24 @@
             <td class="text-right pr-1 total-amount" contenteditable="false">0.00</td>
           </tr>
           <tr id="gst-row">
-            <td colspan="2" class="p-1" contenteditable="true" spellcheck="false">
-              BANK Name : State Bank of India<br />
-              Account No : 42085596249<br />
-              IFSC Code : SBIN0017314
+            <td colspan="2" class="p-1" contenteditable="true" spellcheck="false"
+              style="vertical-align: top; line-height: 1.45; word-break: break-word;">
+              <div>BANK Name : State Bank of India</div>
+              <div>Account No : 42085596249</div>
+              <div>IFSC Code : SBIN0017314</div>
             </td>
             <td colspan="4" style="padding: 0 5px;" contenteditable="false" spellcheck="false">
               <div style="display: flex; justify-content: space-between; font-size: 13px;">
                 <div>Add:- GST CGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
-                <div style="text-align: right; width: 50px;" class="cgst">0.00</div>
+                <div style="text-align: right; min-width: 65px;" class="cgst">0.00</div>
               </div>
               <div style="display: flex; justify-content: space-between; font-size: 13px;">
                 <div>SGST <span style="display: inline-block; vertical-align: middle;">9%</span></div>
-                <div style="text-align: right; width: 50px;" class="sgst">0.00</div>
+                <div style="text-align: right; min-width: 65px;" class="sgst">0.00</div>
               </div>
               <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: bold;">
                 <div>GST TOTAL =</div>
-                <div style="text-align: right; width: 50px;" class="gst-total">0.00</div>
+                <div style="text-align: right; min-width: 65px;" class="gst-total">0.00</div>
               </div>
             </td>
             <td class="text-right pr-1 font-bold" contenteditable="false" style="width: 15%;" id="gst-total-amount">0.00
@@ -1058,6 +2530,21 @@
         </tfoot>
       </table>
 
+      <!-- Hover Action Controls for Table Item Rows -->
+      <div id="table-row-actions" class="table-action-bar no-print flex justify-end items-center gap-2 mt-2 mb-1">
+        <button id="removeItem" type="button"
+          class="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/80 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-2xs hover:shadow-xs transition duration-150 cursor-pointer">
+          <i data-lucide="minus-circle" class="w-3.5 h-3.5"></i>
+          <span>Remove Item</span>
+        </button>
+        <button id="addItem" type="button"
+          class="inline-flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-xs hover:shadow transition duration-150 cursor-pointer">
+          <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+          <span>Add Item</span>
+        </button>
+      </div>
+    </div>
+
       <div class="mt-2 font-bold text-[13px]" contenteditable="true" spellcheck="false">Term's &amp; Condition :-</div>
       <ol class="list-decimal list-inside text-[13px] font-normal ml-4" contenteditable="true" spellcheck="false"
         style="margin-top: 0.25rem;">
@@ -1069,20 +2556,29 @@
 
       <div class="mt-4 text-[14px] font-normal" contenteditable="true" spellcheck="false">
         For, <span class="font-extrabold">DARSHAN ENTERPRISES,</span>
-      </div><br /><br />
-      <div class="mt-2 text-[13px] font-normal" contenteditable="true" spellcheck="false">(Authorised Signatory)</div>
+      </div>
+      <div id="signature-container" contenteditable="false" class="my-1 flex items-center justify-start"
+        style="min-height: 48px;">
+        <img id="signature-img" src="assets/DE_Signature.png" alt="Authorised Signature"
+          class="h-12 w-auto max-w-[180px] object-contain select-none pointer-events-none" />
+      </div>
+      <div class="text-[13px] font-normal" contenteditable="true" spellcheck="false">(Authorised Signatory)</div>
 
-      <div class="flex justify-end mt-4 gap-2">
-        <button id="removeItem" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">Remove
-          Fields</button>
-        <button id="addItem" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">Add
-          Item</button>
+      <div id="signature-toggle-container" class="no-print mt-2 flex items-center gap-1.5 select-none"
+        contenteditable="false">
+        <label for="signatureCheckbox"
+          class="modern-switch switch-emerald group inline-flex items-center gap-2.5 p-1.5 pr-3 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer border border-transparent hover:border-slate-200 transition">
+          <input type="checkbox" id="signatureCheckbox" checked />
+          <span class="modern-switch-track">
+            <span class="modern-switch-thumb"></span>
+          </span>
+          <span class="text-xs text-gray-500 font-semibold group-hover:text-gray-700">Digital Signature</span>
+        </label>
       </div>
 
       <!-- Footer Image - At the very end of the page -->
       <div class="mt-12" id="footer-container">
-        <img src="assets/footer.png" alt="Company Footer Image" class="w-full object-contain"
-          id="company-footer-image" />
+        <img src="assets/footer.png" alt="Company Footer Image" class="w-full block" id="company-footer-image" />
       </div>
     </div>
   </div>
@@ -1123,7 +2619,12 @@
       const main = document.getElementById('mainContent');
       const login = document.getElementById('loginContainer');
       if (main) main.style.display = 'none';
-      if (login) login.style.display = 'flex';
+      if (login) {
+        login.style.display = 'flex';
+        try { lucide.createIcons(); } catch { }
+        const firstInput = login.querySelector('.pin-input');
+        setTimeout(() => firstInput?.focus(), 80);
+      }
     }
 
     function checkAuthentication() {
@@ -1135,19 +2636,121 @@
       }
     }
 
+    let isVerifyingPin = false;
+
     function handleLoginAttempt() {
+      if (isVerifyingPin) return;
       const { pin: storedPin } = getCredentials();
-      const digits = Array.from(document.querySelectorAll('.pin-input')).map(i => (i.value || '').trim()).join('');
+      const pinInputs = Array.from(document.querySelectorAll('.pin-input'));
+      const digits = pinInputs.map(i => (i.value || '').trim()).join('');
       const errorEl = document.getElementById('loginError');
+      const loginCard = document.getElementById('loginCard');
+      const loginContainer = document.getElementById('loginContainer');
+      const loginBtn = document.getElementById('loginButton');
+      const shieldBadge = document.getElementById('loginShieldBadge');
+
+      if (digits.length < 4) return; // Only verify when all 4 digits are entered
+
       if (digits === (storedPin || '1316')) {
-        sessionStorage.setItem('isLoggedIn', 'true');
-        showMainContent();
-        try { window.showToast?.('Login successful', 'success'); } catch { }
+        // === SUCCESS STATE ===
+        isVerifyingPin = true;
+
+        // 1. Turn inputs emerald green instantly
+        pinInputs.forEach(input => {
+          input.classList.remove('pin-error');
+          input.classList.add('pin-success');
+        });
+
+        // 2. Turn button and shield badge emerald green with check icon
+        if (loginBtn) {
+          loginBtn.className = 'group w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold text-sm shadow-md transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer';
+          loginBtn.innerHTML = '<i data-lucide="check-circle" class="w-4 h-4"></i> <span>PIN Verified!</span>';
+        }
+        if (shieldBadge) {
+          shieldBadge.className = 'absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs border-2 border-white transition-all duration-200';
+        }
+        try { lucide.createIcons(); } catch { }
+
+        // 3. Fraction of second delay (220ms), then zoom card and open app!
+        setTimeout(() => {
+          if (loginCard) loginCard.classList.add('login-card-zoom-open');
+          if (loginContainer) loginContainer.classList.add('login-container-fade-out');
+
+          setTimeout(() => {
+            sessionStorage.setItem('isLoggedIn', 'true');
+            showMainContent();
+            // Reset transition classes for next login/logout
+            if (loginCard) loginCard.classList.remove('login-card-zoom-open');
+            if (loginContainer) loginContainer.classList.remove('login-container-fade-out');
+            pinInputs.forEach(input => {
+              input.classList.remove('pin-success', 'pin-error');
+              input.value = '';
+            });
+            if (loginBtn) {
+              loginBtn.className = 'group w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 text-white font-semibold text-sm shadow-sm hover:shadow transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer';
+              loginBtn.innerHTML = '<i data-lucide="lock" class="w-4 h-4 transition-transform group-hover:scale-110"></i> <span>Unlock Workspace</span> <i data-lucide="arrow-right" class="w-4 h-4 transition-transform group-hover:translate-x-0.5"></i>';
+            }
+            if (shieldBadge) {
+              shieldBadge.className = 'absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs border-2 border-white';
+            }
+            try { lucide.createIcons(); } catch { }
+            isVerifyingPin = false;
+            try { window.showToast?.('Welcome to Darshan Enterprises', 'success'); } catch { }
+          }, 380);
+        }, 220);
+
       } else {
+        // === WRONG PIN ERROR STATE ===
+        isVerifyingPin = true;
+
+        // Turn all 4 inputs red
+        pinInputs.forEach(input => {
+          input.classList.remove('pin-success');
+          input.classList.add('pin-error');
+        });
+
+        // Shake inputs container
+        const inputsWrap = pinInputs[0]?.parentElement;
+        if (inputsWrap) {
+          inputsWrap.classList.remove('animate-shake');
+          void inputsWrap.offsetWidth;
+          inputsWrap.classList.add('animate-shake');
+        }
+
+        // Show error message
         if (errorEl) {
           errorEl.classList.remove('hidden');
-          setTimeout(() => errorEl.classList.add('hidden'), 2000);
+          errorEl.classList.add('flex');
+          errorEl.classList.remove('animate-shake');
+          void errorEl.offsetWidth;
+          errorEl.classList.add('animate-shake');
         }
+
+        // Temporarily change button to error appearance
+        if (loginBtn) {
+          loginBtn.className = 'group w-full py-3 px-4 rounded-2xl bg-red-600 text-white font-semibold text-sm shadow-sm transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer';
+          loginBtn.innerHTML = '<i data-lucide="x-circle" class="w-4 h-4"></i> <span>Incorrect PIN</span>';
+          try { lucide.createIcons(); } catch { }
+        }
+
+        // After 750ms, reset error highlights, clear inputs, focus box 1
+        setTimeout(() => {
+          pinInputs.forEach(input => {
+            input.classList.remove('pin-error');
+            input.value = '';
+          });
+          if (loginBtn) {
+            loginBtn.className = 'group w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 text-white font-semibold text-sm shadow-sm hover:shadow transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer';
+            loginBtn.innerHTML = '<i data-lucide="lock" class="w-4 h-4 transition-transform group-hover:scale-110"></i> <span>Unlock Workspace</span> <i data-lucide="arrow-right" class="w-4 h-4 transition-transform group-hover:translate-x-0.5"></i>';
+            try { lucide.createIcons(); } catch { }
+          }
+          if (errorEl) {
+            errorEl.classList.add('hidden');
+            errorEl.classList.remove('flex');
+          }
+          pinInputs[0]?.focus();
+          isVerifyingPin = false;
+        }, 750);
       }
     }
 
@@ -1244,13 +2847,19 @@
       checkAuthentication();
       const loginBtn = document.getElementById('loginButton');
       if (loginBtn) loginBtn.addEventListener('click', handleLoginAttempt);
-      // PIN auto-advance and Enter behavior
+      // PIN auto-advance, auto-submit and Enter behavior
       const pinInputs = Array.from(document.querySelectorAll('.pin-input'));
       pinInputs.forEach((input, idx) => {
         input.addEventListener('input', () => {
           input.value = input.value.replace(/\D/g, '').slice(0, 1);
+          input.classList.remove('pin-error', 'pin-success');
           if (input.value && idx < pinInputs.length - 1) {
             pinInputs[idx + 1].focus();
+          }
+          // Auto submit when all 4 digits are entered
+          const allFilled = pinInputs.every(i => (i.value || '').trim().length === 1);
+          if (allFilled) {
+            setTimeout(handleLoginAttempt, 40);
           }
         });
         input.addEventListener('keydown', (e) => {
@@ -1264,9 +2873,17 @@
           if (!text) return;
           e.preventDefault();
           const digits = text.replace(/\D/g, '').slice(0, pinInputs.length).split('');
-          digits.forEach((d, j) => { if (pinInputs[idx + j]) pinInputs[idx + j].value = d; });
+          digits.forEach((d, j) => {
+            if (pinInputs[idx + j]) {
+              pinInputs[idx + j].value = d;
+              pinInputs[idx + j].classList.remove('pin-error', 'pin-success');
+            }
+          });
           const lastIndex = Math.min(idx + digits.length - 1, pinInputs.length - 1);
           pinInputs[lastIndex].focus();
+          if (pinInputs.every(i => (i.value || '').trim().length === 1)) {
+            setTimeout(handleLoginAttempt, 40);
+          }
         });
       });
 
@@ -1291,16 +2908,382 @@
     function toggleSideNav() {
       const sideNav = document.getElementById('sideNav');
       const mainContent = document.getElementById('mainContent');
-      sideNav.classList.toggle('open');
-      mainContent.classList.toggle('shifted');
+      const overlay = document.getElementById('sideNavOverlay');
+      if (!sideNav) return;
+      const isOpen = sideNav.classList.toggle('open');
+      if (mainContent) mainContent.classList.toggle('shifted', isOpen);
+      if (overlay) {
+        if (isOpen) {
+          overlay.classList.remove('pointer-events-none');
+          overlay.classList.remove('opacity-0');
+          overlay.classList.add('opacity-100');
+        } else {
+          overlay.classList.add('pointer-events-none');
+          overlay.classList.remove('opacity-100');
+          overlay.classList.add('opacity-0');
+        }
+      }
+      try { lucide.createIcons(); } catch { }
     }
 
-    // Add these event listeners in your initializeApp function
-    document.getElementById('toggleNav').addEventListener('click', toggleSideNav);
-    document.getElementById('closeNav').addEventListener('click', toggleSideNav);
-    document.getElementById('saveBtn').addEventListener('click', () => window.saveBill());
+    // Add navigation and modal event listeners
+    document.getElementById('toggleNav')?.addEventListener('click', toggleSideNav);
+    document.getElementById('mobileSideNavBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSideNav();
+    });
+    document.getElementById('closeNav')?.addEventListener('click', toggleSideNav);
+    document.getElementById('sideNavOverlay')?.addEventListener('click', toggleSideNav);
+
+
+    // Sidebar & Search Buttons
+    document.getElementById('newBillSidebarBtn')?.addEventListener('click', () => window.startNewBill?.());
+    document.getElementById('billSearchInput')?.addEventListener('input', (e) => window.filterBillsList?.(e.target.value));
+
+    // Duplicate Modal Event Listeners
+    document.getElementById('cancelDuplicateBtn')?.addEventListener('click', () => window.closeDuplicateModal?.());
+    document.getElementById('confirmDuplicateBtn')?.addEventListener('click', () => window.executeDuplicateBill?.());
+    document.getElementById('duplicateBillNameInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') window.executeDuplicateBill?.();
+      if (e.key === 'Escape') window.closeDuplicateModal?.();
+    });
+    const dupModal = document.getElementById('duplicateModal');
+    if (dupModal) {
+      dupModal.addEventListener('click', (e) => {
+        if (e.target === dupModal) window.closeDuplicateModal?.();
+      });
+    }
+
+    // Rename Modal Event Listeners
+    document.getElementById('cancelRenameBtn')?.addEventListener('click', () => window.closeRenameModal?.());
+    document.getElementById('confirmRenameBtn')?.addEventListener('click', () => window.executeRenameBill?.());
+    document.getElementById('renameBillNameInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') window.executeRenameBill?.();
+      if (e.key === 'Escape') window.closeRenameModal?.();
+    });
+    const renModal = document.getElementById('renameModal');
+    if (renModal) {
+      renModal.addEventListener('click', (e) => {
+        if (e.target === renModal) window.closeRenameModal?.();
+      });
+    }
+
+    document.getElementById('saveBtn')?.addEventListener('click', () => window.saveBill());
     // Ensure initial label matches context (new unsaved bill)
     window.updateSaveButtonLabel?.();
+
+    // Signature Management Functions
+    function ensureSignatureElement() {
+      const billEl = document.getElementById('bill');
+      if (!billEl) return;
+      if (!document.getElementById('signature-container')) {
+        const allDivs = billEl.querySelectorAll('div');
+        let darshanDiv = null;
+        let authDiv = null;
+        allDivs.forEach(div => {
+          if (div.textContent.includes('DARSHAN ENTERPRISES')) darshanDiv = div;
+          if (div.textContent.includes('(Authorised Signatory)')) authDiv = div;
+        });
+        if (darshanDiv && authDiv) {
+          let sibling = darshanDiv.nextSibling;
+          while (sibling && sibling !== authDiv) {
+            const next = sibling.nextSibling;
+            if (sibling.nodeName === 'BR') sibling.remove();
+            sibling = next;
+          }
+          const sigContainer = document.createElement('div');
+          sigContainer.id = 'signature-container';
+          sigContainer.contentEditable = 'false';
+          sigContainer.className = 'my-1 flex items-center justify-start';
+          sigContainer.style.minHeight = '48px';
+          sigContainer.innerHTML = '<img id="signature-img" src="assets/DE_Signature.png" alt="Authorised Signature" class="h-12 w-auto max-w-[180px] object-contain select-none pointer-events-none" />';
+          authDiv.parentNode.insertBefore(sigContainer, authDiv);
+        }
+      }
+      let sigToggle = document.getElementById('signature-toggle-container');
+      if (!sigToggle) {
+        const authDiv = Array.from(billEl.querySelectorAll('div')).find(d => d.textContent.includes('(Authorised Signatory)'));
+        if (authDiv) {
+          sigToggle = document.createElement('div');
+          sigToggle.id = 'signature-toggle-container';
+          sigToggle.className = 'no-print mt-2 flex items-center gap-1.5 select-none';
+          sigToggle.contentEditable = 'false';
+          sigToggle.innerHTML = `
+            <label for="signatureCheckbox" class="modern-switch switch-emerald group inline-flex items-center gap-2.5 p-1.5 pr-3 rounded-xl hover:bg-slate-50 text-slate-700 cursor-pointer border border-transparent hover:border-slate-200 transition">
+              <input type="checkbox" id="signatureCheckbox" checked />
+              <span class="modern-switch-track">
+                <span class="modern-switch-thumb"></span>
+              </span>
+              <span class="text-xs text-gray-500 font-semibold group-hover:text-gray-700">Digital Signature</span>
+            </label>
+          `;
+          authDiv.parentNode.insertBefore(sigToggle, authDiv.nextSibling);
+        }
+      }
+    }
+    window.ensureSignatureElement = ensureSignatureElement;
+
+    // Item Row Action Controls Management (hover reveal attached to fields)
+    function ensureItemRowActions() {
+      const billEl = document.getElementById('bill');
+      if (!billEl) return;
+      const table = billEl.querySelector('table');
+      if (!table) return;
+
+      // 1. Remove any legacy bottom action container (placed below signature in older versions)
+      const legacyBottomContainers = billEl.querySelectorAll('.flex.justify-end.mt-4.gap-2.no-print');
+      legacyBottomContainers.forEach(container => {
+        if (container.querySelector('#addItem') || container.querySelector('#removeItem') || container.parentElement === billEl) {
+          container.remove();
+        }
+      });
+
+      // 2. Ensure table is wrapped in .table-hover-wrapper
+      let wrapper = table.closest('.table-hover-wrapper');
+      if (!wrapper) {
+        wrapper = document.createElement('div');
+        wrapper.className = 'table-hover-wrapper relative';
+        table.parentNode.insertBefore(wrapper, table);
+        wrapper.appendChild(table);
+      }
+
+      // 3. Ensure #table-row-actions exists right after table inside wrapper
+      let rowActions = document.getElementById('table-row-actions');
+      if (!rowActions || !wrapper.contains(rowActions)) {
+        if (rowActions) rowActions.remove();
+        rowActions = document.createElement('div');
+        rowActions.id = 'table-row-actions';
+        rowActions.className = 'table-action-bar no-print flex justify-end items-center gap-2 mt-2 mb-1';
+        rowActions.innerHTML = `
+          <button id="removeItem" type="button"
+            class="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/80 px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-2xs hover:shadow-xs transition duration-150 cursor-pointer">
+            <i data-lucide="minus-circle" class="w-3.5 h-3.5"></i>
+            <span>Remove Item</span>
+          </button>
+          <button id="addItem" type="button"
+            class="inline-flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold shadow-xs hover:shadow transition duration-150 cursor-pointer">
+            <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+            <span>Add Item</span>
+          </button>
+        `;
+        wrapper.appendChild(rowActions);
+        try { lucide.createIcons(); } catch { }
+      }
+
+      // 4. Re-bind row listeners
+      window.setupBillRowListeners?.();
+    }
+    window.ensureItemRowActions = ensureItemRowActions;
+
+    function setSignatureState(enabled, markDirty = false) {
+      const sigImg = document.getElementById('signature-img');
+      const sigCheckbox = document.getElementById('signatureCheckbox');
+      const sigTopCheckbox = document.getElementById('includeSignatureTop');
+
+      if (sigCheckbox) {
+        sigCheckbox.checked = enabled;
+        if (enabled) sigCheckbox.setAttribute('checked', '');
+        else sigCheckbox.removeAttribute('checked');
+      }
+      if (sigTopCheckbox) {
+        sigTopCheckbox.checked = enabled;
+        if (enabled) sigTopCheckbox.setAttribute('checked', '');
+        else sigTopCheckbox.removeAttribute('checked');
+      }
+      if (sigImg) {
+        sigImg.style.display = enabled ? 'block' : 'none';
+      }
+
+      if (markDirty) {
+        window.isBillSaved = false;
+        window.hasUserStarted = true;
+        window.updateActionButtons?.();
+      }
+    }
+    window.setSignatureState = setSignatureState;
+
+    function setupSignatureToggle() {
+      const sigCheckbox = document.getElementById('signatureCheckbox');
+      const sigTopCheckbox = document.getElementById('includeSignatureTop');
+
+      if (sigCheckbox) {
+        sigCheckbox.onchange = (e) => {
+          setSignatureState(e.target.checked, true);
+        };
+      }
+      if (sigTopCheckbox) {
+        sigTopCheckbox.onchange = (e) => {
+          setSignatureState(e.target.checked, true);
+        };
+      }
+    }
+    window.setupSignatureToggle = setupSignatureToggle;
+
+    // Setup Top Header File/Document Title Pill (Desktop empty space)
+    function setupHeaderDocTitle() {
+      const container = document.getElementById('headerDocTitleContainer');
+      if (!container) return;
+
+      const displayEl = document.getElementById('headerDocTitleDisplay');
+      const editWrap = document.getElementById('headerDocTitleEditWrap');
+      const titleText = document.getElementById('headerDocTitleText');
+      const inputEl = document.getElementById('headerDocTitleInput');
+      const saveBtn = document.getElementById('headerDocTitleSaveBtn');
+      const cancelBtn = document.getElementById('headerDocTitleCancelBtn');
+
+      if (!displayEl || !editWrap || !titleText || !inputEl) return;
+
+      let isEditing = false;
+
+      const startEditing = () => {
+        if (isEditing) return;
+        isEditing = true;
+        const billEl = document.getElementById('bill');
+        const currentVal = (billEl?.dataset.customName || '').trim();
+        inputEl.value = currentVal;
+        displayEl.classList.add('hidden');
+        displayEl.classList.remove('flex');
+        editWrap.classList.remove('hidden');
+        editWrap.classList.add('flex');
+        setTimeout(() => {
+          inputEl.focus();
+          inputEl.select();
+        }, 40);
+        try { lucide.createIcons(); } catch { }
+      };
+
+      const stopEditing = () => {
+        isEditing = false;
+        editWrap.classList.add('hidden');
+        editWrap.classList.remove('flex');
+        displayEl.classList.remove('hidden');
+        displayEl.classList.add('flex');
+      };
+
+      const saveTitle = () => {
+        const rawVal = inputEl.value.trim();
+        stopEditing();
+        if (window.renameCurrentBill) {
+          window.renameCurrentBill(rawVal);
+        } else {
+          const billEl = document.getElementById('bill');
+          if (billEl) billEl.dataset.customName = rawVal;
+          window.updateHeaderDocTitle(rawVal);
+        }
+      };
+
+      displayEl.addEventListener('click', startEditing);
+      displayEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          startEditing();
+        }
+      });
+
+      saveBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        saveTitle();
+      });
+
+      cancelBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        stopEditing();
+      });
+
+      inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveTitle();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          stopEditing();
+        }
+      });
+
+      inputEl.addEventListener('blur', (e) => {
+        if (e.relatedTarget === saveBtn || e.relatedTarget === cancelBtn) return;
+        if (isEditing) {
+          saveTitle();
+        }
+      });
+    }
+    // Setup Mobile Front Header File/Document Title (Left: DARSHAN ENTERPRISES | Right: File Name)
+    function setupMobileDocTitle() {
+      const displayEl = document.getElementById('mobileDocTitleDisplay');
+      if (!displayEl) return;
+
+      const triggerRename = async (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        const billEl = document.getElementById('bill');
+        const currentVal = (billEl?.dataset.customName || '').trim();
+        if (window.showPromptModal) {
+          const newName = await window.showPromptModal({
+            title: 'Rename Bill',
+            subtitle: 'Enter a custom name for this bill',
+            label: 'Bill / File Name',
+            placeholder: 'e.g. Acme Corp March Invoice',
+            defaultValue: currentVal,
+            confirmText: 'Save Name'
+          });
+          if (newName !== null) {
+            if (window.renameCurrentBill) {
+              window.renameCurrentBill(newName.trim());
+            } else {
+              if (billEl) billEl.dataset.customName = newName.trim();
+              window.updateHeaderDocTitle?.(newName.trim());
+            }
+          }
+        }
+      };
+
+      displayEl.addEventListener('click', triggerRename);
+      displayEl.addEventListener('touchend', (e) => {
+        // Stop propagation so touching the pill doesn't toggle sideNav
+        e.stopPropagation();
+      });
+      displayEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          triggerRename(e);
+        }
+      });
+    }
+    window.setupMobileDocTitle = setupMobileDocTitle;
+
+    function setupSidebarDocTitle() {
+      // Replaced by setupMobileDocTitle
+    }
+    window.setupSidebarDocTitle = setupSidebarDocTitle;
+
+    window.updateHeaderDocTitle = function (customName) {
+      const billEl = document.getElementById('bill');
+      const name = customName !== undefined 
+        ? customName 
+        : (billEl ? (billEl.dataset.customName || '') : '');
+      
+      const displayName = (name && name.trim()) ? name.trim() : 'Untitled Bill';
+      
+      // Desktop top navbar
+      const textEl = document.getElementById('headerDocTitleText');
+      const inputEl = document.getElementById('headerDocTitleInput');
+      if (textEl) {
+        textEl.textContent = displayName;
+        textEl.title = displayName;
+      }
+      if (inputEl) {
+        inputEl.value = (name && name.trim()) ? name.trim() : '';
+      }
+
+      // Mobile front header (next to DARSHAN ENTERPRISES)
+      const mobileTextEl = document.getElementById('mobileHeaderDocTitleText');
+      if (mobileTextEl) {
+        mobileTextEl.textContent = displayName;
+        mobileTextEl.title = displayName;
+      }
+    };
 
     // Verify html2pdf is loaded
     function checkHtml2Pdf() {
@@ -1325,6 +3308,10 @@
       // Initialize all event listeners
       addInputListeners();
       initializeAllRows();
+      setupHeaderDocTitle();
+      setupMobileDocTitle();
+      setupSidebarDocTitle();
+      window.updateHeaderDocTitle();
 
       // Apply initial state for hide header checkbox
       if (hideHeaderCheckbox && headerContainer) {
@@ -1374,12 +3361,14 @@
 
       if (includeGSTCheckbox) {
         // Function to update GST display and calculations dynamically
-        const updateGSTDisplay = () => {
+        const updateGSTDisplay = (markDirty = false) => {
           const includeGST = includeGSTCheckbox.checked;
 
           // Update label
           if (gstToggleLabel) {
-            gstToggleLabel.textContent = includeGST ? 'Include GST' : 'Without GST';
+            gstToggleLabel.textContent = (window.innerWidth < 640)
+              ? (includeGST ? 'GST' : 'No GST')
+              : (includeGST ? 'Include GST' : 'Without GST');
           }
 
           // Show/hide GST row dynamically
@@ -1393,19 +3382,29 @@
             calculateTotal?.();
           }, 0);
 
-          // Mark bill as unsaved when GST toggle changes
-          isBillSaved = false;
-          hasUserStarted = true;
-          window.updateActionButtons?.();
+          if (markDirty) {
+            isBillSaved = false;
+            hasUserStarted = true;
+            window.updateActionButtons?.();
+          }
         };
 
-        // Apply initial state
-        updateGSTDisplay();
+        // Apply initial state without marking dirty
+        updateGSTDisplay(false);
 
         // Add event listener for dynamic GST toggle
-        // This will work at any time, even after all fields are filled
-        includeGSTCheckbox.addEventListener('change', updateGSTDisplay);
+        includeGSTCheckbox.addEventListener('change', () => updateGSTDisplay(true));
+
+        // Handle window resize dynamically between desktop and mobile labels
+        window.addEventListener('resize', () => {
+          updateGSTDisplay(false);
+        });
       }
+
+      // Initialize Digital Signature toggle
+      setupSignatureToggle();
+      const initialSigState = (document.getElementById('includeSignatureTop')?.checked ?? true);
+      setSignatureState(initialSigState);
 
       // Add download button event listener
       if (downloadBtn) {
@@ -1432,7 +3431,16 @@
 
           // Only warn if completely empty, but allow download
           if (!billNo && !date && !billedTo && !hasItemData) {
-            const proceed = confirm('Bill appears to be empty. Do you still want to download the PDF?');
+            const proceed = window.showConfirmModal
+              ? await window.showConfirmModal({
+                title: 'Bill Appears Empty',
+                subtitle: 'PDF Export Warning',
+                message: 'This bill has no items or details filled in. Do you still want to download the PDF?',
+                confirmText: 'Download Anyway',
+                cancelText: 'Cancel',
+                confirmColor: 'amber'
+              })
+              : confirm('Bill appears to be empty. Do you still want to download the PDF?');
             if (!proceed) return;
           }
 
@@ -1459,32 +3467,132 @@
 
           // Clone without buttons for clean export
           const clone = bill.cloneNode(true);
-          clone.querySelectorAll('button').forEach(btn => btn.remove());
+          clone.id = 'bill-pdf-export';
 
-          // ✅ Force full-width header image
-          clone.querySelectorAll('img').forEach(img => {
-            img.style.width = '100%';
-            img.style.height = 'auto';
-            img.style.objectFit = 'cover';
+          clone.style.boxSizing = 'border-box';
+          clone.style.borderRadius = '0px';
+          clone.style.border = 'none';
+          clone.style.boxShadow = 'none';
+          clone.style.outline = 'none';
+          clone.style.margin = '0 auto';
+          clone.style.width = '210mm';
+          clone.style.maxWidth = '210mm';
+          clone.style.minWidth = '210mm';
+          clone.style.height = '296mm';
+          clone.style.maxHeight = '296mm';
+          clone.style.minHeight = '296mm';
+          clone.style.overflow = 'hidden';
+          clone.style.position = 'relative';
+          clone.style.background = '#ffffff';
+          clone.style.fontSize = '13px';
+          clone.style.color = '#000000';
+          clone.style.transform = 'none';
+
+          const isHeaderHidden = !!(document.getElementById('hideHeader')?.checked || bill.classList.contains('header-hidden'));
+          clone.style.padding = '0';
+
+          const cloneHeader = clone.querySelector('#header-container');
+          const cloneFooter = clone.querySelector('#footer-container');
+
+          // Clean up buttons, toggles and stray line breaks from clone
+          clone.querySelectorAll('button, .no-print, #signature-toggle-container, #hideHeader, label[for="hideHeader"], #includeGST, label[for="includeGST"], #includeSignatureTop, label[for="includeSignatureTop"]').forEach(el => el.remove());
+          clone.querySelectorAll('#bill-pdf-export > br').forEach(br => br.remove());
+
+          // Handle signature in clone
+          const cloneSigImg = clone.querySelector('#signature-img');
+          const isSigActive = !!(document.getElementById('signatureCheckbox')?.checked ?? document.getElementById('includeSignatureTop')?.checked ?? true);
+          if (cloneSigImg) {
+            cloneSigImg.style.display = isSigActive ? 'block' : 'none';
+            cloneSigImg.style.width = 'auto';
+            cloneSigImg.style.maxWidth = '180px';
+            cloneSigImg.style.height = '48px';
+            cloneSigImg.style.objectFit = 'contain';
+          }
+
+          // Create clean body wrapper for middle content (table, terms, signature)
+          const bodyWrapper = document.createElement('div');
+          bodyWrapper.id = 'bill-pdf-body';
+          bodyWrapper.style.boxSizing = 'border-box';
+          bodyWrapper.style.width = '210mm';
+          bodyWrapper.style.padding = isHeaderHidden ? '28mm 15.5mm 0 13.5mm' : '0 15.5mm 0 13.5mm';
+
+          // Move all elements between header and footer into bodyWrapper
+          const cloneChildren = Array.from(clone.childNodes);
+          cloneChildren.forEach(child => {
+            if (child === cloneHeader || child === cloneFooter) return;
+            bodyWrapper.appendChild(child);
           });
 
-          clone.querySelectorAll('button').forEach(btn => btn.remove());
-          // Ensure the hideHeader checkbox and label are also removed from the clone
-          const cloneCheckbox = clone.querySelector('#hideHeader');
-          const cloneLabel = clone.querySelector('label[for="hideHeader"]');
-          if (cloneCheckbox) cloneCheckbox.remove();
-          if (cloneLabel) cloneLabel.remove();
+          // Empty clone and rebuild cleanly: Header -> bodyWrapper -> Footer
+          clone.innerHTML = '';
 
-          // ✅ Position footer at the end of page with proper spacing
-          // Simply add padding-top to footer to push it down - no wrapper needed
-          const cloneFooter = clone.querySelector('#footer-container');
-          if (cloneFooter) {
-            cloneFooter.style.paddingTop = '30mm'; // Reduced spacing to fit on 1 page
-            cloneFooter.style.borderTop = 'none';
-            cloneFooter.style.pageBreakBefore = 'avoid';
-            cloneFooter.style.pageBreakInside = 'avoid';
-            cloneFooter.style.pageBreakAfter = 'avoid';
+          if (isHeaderHidden) {
+            clone.classList.add('header-hidden');
+            if (cloneHeader) cloneHeader.remove();
+            if (cloneFooter) cloneFooter.remove();
+            clone.appendChild(bodyWrapper);
+          } else {
+            clone.classList.remove('header-hidden');
+            if (cloneHeader) {
+              cloneHeader.style.width = '211.2mm';
+              cloneHeader.style.maxWidth = '211.2mm';
+              cloneHeader.style.minWidth = '211.2mm';
+              cloneHeader.style.marginLeft = '-1.2mm';
+              cloneHeader.style.marginRight = '-1.2mm';
+              cloneHeader.style.marginTop = '3mm';
+              cloneHeader.style.marginBottom = '3mm';
+              cloneHeader.style.padding = '0';
+              cloneHeader.style.boxSizing = 'border-box';
+              cloneHeader.style.display = 'block';
+              clone.appendChild(cloneHeader);
+            }
+            clone.appendChild(bodyWrapper);
+            if (cloneFooter) {
+              cloneFooter.style.position = 'absolute';
+              cloneFooter.style.bottom = '4mm';
+              cloneFooter.style.left = '-0.8mm';
+              cloneFooter.style.width = '210.8mm';
+              cloneFooter.style.maxWidth = '210.8mm';
+              cloneFooter.style.minWidth = '210.8mm';
+              cloneFooter.style.margin = '0';
+              cloneFooter.style.padding = '0';
+              cloneFooter.style.boxSizing = 'border-box';
+              cloneFooter.style.display = 'block';
+              cloneFooter.style.pageBreakInside = 'avoid';
+              clone.appendChild(cloneFooter);
+            }
           }
+
+          // Ensure table is strictly 100% width and centered
+          clone.querySelectorAll('table').forEach(tbl => {
+            tbl.style.width = '100%';
+            tbl.style.margin = '0 auto';
+          });
+
+          // Ensure table cells maintain proper line-height and alignment
+          clone.querySelectorAll('td, th').forEach(cell => {
+            cell.style.lineHeight = '1.35';
+            cell.style.wordBreak = 'break-word';
+          });
+          const cloneBankCell = clone.querySelector('#gst-row td:first-child');
+          if (cloneBankCell) {
+            cloneBankCell.style.verticalAlign = 'top';
+            cloneBankCell.style.lineHeight = '1.45';
+          }
+          clone.querySelectorAll('.rate-cell, .amount, .total-amount, #gst-total-amount, .total-in-words').forEach(cell => {
+            cell.style.textAlign = 'right';
+            cell.style.paddingRight = '6px';
+            cell.style.whiteSpace = 'nowrap';
+          });
+
+          // Force full-width header & footer images
+          clone.querySelectorAll('#header-container img, #footer-container img').forEach(img => {
+            img.style.width = '100%';
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            img.style.borderRadius = '0';
+          });
 
           // Force all elements to stay on same page
           clone.style.pageBreakInside = 'avoid';
@@ -1497,16 +3605,25 @@
             : 'tax_invoice';
 
           const opt = {
-            margin: [0, 5, 5, 5], // Top: 0mm, Right: 5mm, Bottom: 5mm, Left: 5mm
+            margin: [0, 0, 0, 0],
             filename: sanitizedBase + '.pdf',
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2, logging: false, dpi: 300, letterRendering: true },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            image: { type: 'jpeg', quality: 1.0 },
+            html2canvas: {
+              scale: 3,
+              logging: false,
+              dpi: 300,
+              letterRendering: false,
+              useCORS: true,
+              scrollX: 0,
+              scrollY: 0
+            },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
           };
 
           // Check if html2pdf is available
           if (typeof html2pdf === 'undefined') {
-            alert('PDF library is not loaded. Please refresh the page and try again.');
+            showToast('PDF library is not loaded. Please refresh the page and try again.', 'error');
             editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
             if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
             if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
@@ -1516,7 +3633,20 @@
           console.log('Starting PDF download...');
           window.showLoader?.();
 
-          html2pdf().set(opt).from(clone).save().then(() => {
+          // Reset page scroll position temporarily so html2canvas doesn't capture window scroll offset
+          const prevScrollX = window.scrollX || window.pageXOffset || 0;
+          const prevScrollY = window.scrollY || window.pageYOffset || 0;
+          window.scrollTo(0, 0);
+
+          html2pdf().set(opt).from(clone).toPdf().get('pdf').then((pdf) => {
+            // Strip any unintended blank trailing pages
+            const totalPages = pdf.internal.getNumberOfPages();
+            if (totalPages > 1) {
+              for (let i = totalPages; i > 1; i--) {
+                pdf.deletePage(i);
+              }
+            }
+          }).save().then(() => {
             console.log('PDF downloaded successfully');
             editableElements.forEach(el => el.setAttribute('contenteditable', 'true'));
             // Restore display state of the "Hide Header" checkbox and its label
@@ -1530,6 +3660,7 @@
             if (hideHeaderCheckbox) hideHeaderCheckbox.style.display = checkboxDisplayState;
             if (hideHeaderLabel) hideHeaderLabel.style.display = labelDisplayState;
           }).finally(() => {
+            window.scrollTo(prevScrollX, prevScrollY);
             window.hideLoader?.();
           });
         });
@@ -1562,40 +3693,9 @@
       });
 
 
-      // Add item button event listener
-      if (addItemBtn && invoiceItems) {
-        addItemBtn.addEventListener('click', () => {
-          const rowCount = invoiceItems.querySelectorAll('.item-row').length + 1;
-          const newRow = document.createElement('tr');
-          newRow.className = 'text-center item-row';
-          newRow.innerHTML = `
-          <td>${rowCount}</td>
-          <td class="text-left" contenteditable="true" spellcheck="false"></td>
-          <td contenteditable="true" spellcheck="false"></td>
-          <td class="quantity-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="unit-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="rate-cell" contenteditable="true" spellcheck="false"></td>
-          <td class="text-right pr-1 amount" contenteditable="false">0.00</td>
-        `;
-          invoiceItems.appendChild(newRow);
-          addInputListeners();
-          calculateTotal?.();
-        });
-      }
-
-      // Remove item button event listener
-      if (removeItemBtn && invoiceItems) {
-        removeItemBtn.addEventListener('click', () => {
-          const rows = invoiceItems.querySelectorAll('.item-row');
-          if (rows.length > 1) {
-            rows[rows.length - 1].remove();
-            updateRowNumbers?.();
-            calculateTotal?.();
-          } else {
-            alert('Cannot remove the last row. At least one item row must remain.');
-          }
-        });
-      }
+      // Initialize bill row listeners without native alerts
+      if (window.ensureItemRowActions) window.ensureItemRowActions();
+      window.setupBillRowListeners?.();
     }
 
     // Valid unit codes
@@ -1829,7 +3929,7 @@
       if (tooltip) tooltip.remove();
 
       if (unit && !validUnits.includes(unit)) {
-        alert('Invalid unit code. Please use one of the following:\n' + validUnits.join(', '));
+        showToast('Invalid unit code. Allowed: ' + validUnits.join(', '), 'warning');
         event.target.textContent = '';
       } else {
         event.target.textContent = unit;
