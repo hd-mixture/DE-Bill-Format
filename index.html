@@ -1249,7 +1249,7 @@
 
     /* Add top space when header is hidden */
     #bill.header-hidden {
-      padding-top: 25mm;
+      padding-top: 40mm;
       padding-bottom: 25mm;
       /* Equal spacing top and bottom when header/footer hidden */
     }
@@ -1402,6 +1402,11 @@
         height: 297mm;
         page-break-after: avoid;
       }
+
+      #bill.header-hidden {
+        padding-top: 40mm !important;
+        padding-bottom: 25mm !important;
+      }
     }
 
     /* PDF Export Styling - ensures PDF is always crisp rectangular A4 without screen preview curves or shadow */
@@ -1434,7 +1439,7 @@
     }
 
     #bill-pdf-export.header-hidden #bill-pdf-body {
-      padding: 28mm 15.5mm 0 13.5mm !important;
+      padding: 40mm 15.5mm 0 13.5mm !important;
     }
 
     #bill-pdf-export .table-hover-wrapper {
@@ -3681,7 +3686,7 @@
           bodyWrapper.id = 'bill-pdf-body';
           bodyWrapper.style.boxSizing = 'border-box';
           bodyWrapper.style.width = '210mm';
-          bodyWrapper.style.padding = isHeaderHidden ? '28mm 15.5mm 0 13.5mm' : '0 15.5mm 0 13.5mm';
+          bodyWrapper.style.padding = isHeaderHidden ? '40mm 15.5mm 0 13.5mm' : '0 15.5mm 0 13.5mm';
 
           // Move all elements between header and footer into bodyWrapper
           const cloneChildren = Array.from(clone.childNodes);
